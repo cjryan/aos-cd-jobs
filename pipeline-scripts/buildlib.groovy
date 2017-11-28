@@ -3,13 +3,39 @@ def commonlib = load("pipeline-scripts/commonlib.groovy")
 
 commonlib.initialize()
 
-def initialize() {
-    // Login to legacy registry.ops to enable pushes
-    withCredentials([[$class: 'UsernamePasswordMultiBinding', credentialsId: 'registry-push.ops.openshift.com',
-                      usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD']]) {
-        sh 'sudo docker login -u $USERNAME -p "$PASSWORD" registry-push.ops.openshift.com'
-    }
+GITHUB_URLS = [:]
+GITHUB_BASE_PATHS = [:]
 
+def initialize() {
+    this.registry_login()
+    this.path_setup()
+    this.kinit()
+
+    GITHUB_URLS = [:]
+    GITHUB_BASE_PATHS = [:]
+}
+
+// Initialize $PATH and $GOPATH
+def path_setup() {
+    echo "Adding git managed script directories to PATH"
+    // ose_images.sh
+    env.PATH = "${pwd()}/build-scripts/ose_images:${env.PATH}"
+
+    GOPATH = "${env.WORKSPACE}/go"
+    env.GOPATH = GOPATH
+    sh "rm -rf ${GOPATH}"  // Remove any cruft
+    sh "mkdir -p ${GOPATH}"
+    echo "Initialized env.GOPATH: ${env.GOPATH}"
+}
+
+def kinit() {
+    echo "Initializing ocp-build kerberos credentials"
+    // Keytab for old os1 build machine
+    // sh "kinit -k -t /home/jenkins/ocp-build.keytab ocp-build/atomic-e2e-jenkins.rhev-ci-vms.eng.rdu2.redhat.com@REDHAT.COM"
+    sh "kinit -k -t /home/jenkins/ocp-build-buildvm.openshift.eng.bos.redhat.com.keytab ocp-build/buildvm.openshift.eng.bos.redhat.com@REDHAT.COM"
+}
+
+def registry_login() {
     // Login to new registry.ops to enable pushes
     withCredentials([[$class: 'UsernamePasswordMultiBinding', credentialsId: 'creds_registry.reg-aws',
                       usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD']]) {
@@ -17,23 +43,19 @@ def initialize() {
 
         // Writing the file out is all to avoid displaying the token in the Jenkins console
         writeFile file:"docker_login.sh", text:'''#!/bin/bash
-        sudo docker login -u $USERNAME -p $(oc whoami -t) registry.reg-aws.openshift.com:443
+        docker login -u $USERNAME -p $(oc whoami -t) registry.reg-aws.openshift.com:443
         '''
         sh 'chmod +x docker_login.sh'
         sh './docker_login.sh'
     }
+}
 
-    echo "Adding git managed ose_images.sh directory to PATH"
-    env.PATH = "${pwd()}/build-scripts/ose_images:${env.PATH}"
-
-    echo "Initializing ocp-build kerberos credentials"
-    sh "kinit -k -t /home/jenkins/ocp-build.keytab ocp-build/atomic-e2e-jenkins.rhev-ci-vms.eng.rdu2.redhat.com@REDHAT.COM"
-
-    GOPATH = "${env.WORKSPACE}/go"
-    env.GOPATH = GOPATH
-    sh "rm -rf ${GOPATH}"  // Remove any cruft
-    sh "mkdir -p ${GOPATH}"
-    echo "Initialized env.GOPATH: ${env.GOPATH}"
+def print_tags(image_name) {
+    // Writing the file out is all to avoid displaying the token in the Jenkins console
+    writeFile file:"print_tags.sh", text:'''#!/bin/bash
+    curl -sH "Authorization: Bearer $(oc whoami -t)" ''' + "https://registry.reg-aws.openshift.com/v2/${image_name}/tags/list | jq ."
+    sh 'chmod +x print_tags.sh'
+    sh './print_tags.sh'
 }
 
 def initialize_openshift_dir() {
@@ -43,12 +65,32 @@ def initialize_openshift_dir() {
     echo "Initialized env.OPENSHIFT_DIR: ${env.OPENSHIFT_DIR}"
 }
 
+def initialize_enterprise_images_dir() {
+    this.initialize_openshift_dir()
+    ENTERPRISE_IMAGES_DIR = "${env.WORKSPACE}/enterprise-images"
+    sh "rm -rf ${ENTERPRISE_IMAGES_DIR}"  // Remove any cruft
+    sh "mkdir -p ${ENTERPRISE_IMAGES_DIR}"
+    OIT_PATH = "${ENTERPRISE_IMAGES_DIR}/oit/oit.py"
+    sh "git clone ${GITHUB_BASE}/enterprise-images.git ${ENTERPRISE_IMAGES_DIR}"
+    env.ENTERPRISE_IMAGES_DIR = ENTERPRISE_IMAGES_DIR
+    env.OIT_PATH = OIT_PATH
+    echo "Initialized env.ENTERPRISE_IMAGES_DIR: ${env.ENTERPRISE_IMAGES_DIR}"
+}
+
+def oit( cmd ){
+    cmd = cmd.replaceAll( '\n', ' ' ) // Allow newlines in command for readability, but don't let them flow into the sh
+    cmd = cmd.replaceAll( ' \\ ', ' ' ) // If caller included line continuation characters, remove them
+    sh "${env.ENTERPRISE_IMAGES_DIR}/oit/oit.py --user=ocp-build --metadata-dir ${env.ENTERPRISE_IMAGES_DIR} ${cmd.trim()}"
+}
+
 def initialize_ose_dir() {
     this.initialize_openshift_dir()
     dir( OPENSHIFT_DIR ) {
         sh "git clone ${GITHUB_BASE}/ose.git"
+        GITHUB_URLS["ose"] = "${GITHUB_BASE}/ose.git"
     }
     OSE_DIR = "${OPENSHIFT_DIR}/ose"
+    GITHUB_BASE_PATHS["ose"] = OSE_DIR
     env.OSE_DIR = OSE_DIR
     echo "Initialized env.OSE_DIR: ${env.OSE_DIR}"
 }
@@ -57,8 +99,10 @@ def initialize_origin_web_console_dir() {
     this.initialize_openshift_dir()
     dir( OPENSHIFT_DIR ) {
         sh "git clone ${GITHUB_BASE}/origin-web-console.git"
+        GITHUB_URLS["origin-web-console"] = "${GITHUB_BASE}/origin-web-console.git"
     }
     WEB_CONSOLE_DIR = "${OPENSHIFT_DIR}/origin-web-console"
+    GITHUB_BASE_PATHS["origin-web-console"] = WEB_CONSOLE_DIR
     env.WEB_CONSOLE_DIR = WEB_CONSOLE_DIR
     echo "Initialized env.WEB_CONSOLE_DIR: ${env.WEB_CONSOLE_DIR}"
 }
@@ -67,10 +111,25 @@ def initialize_openshift_ansible() {
     this.initialize_openshift_dir()
     dir( OPENSHIFT_DIR ) {
         sh "git clone ${GITHUB_BASE}/openshift-ansible.git"
+        GITHUB_URLS["openshift-ansible"] = "${GITHUB_BASE}/openshift-ansible.git"
     }
     OPENSHIFT_ANSIBLE_DIR = "${OPENSHIFT_DIR}/openshift-ansible"
+    GITHUB_BASE_PATHS["openshift-ansible"] = OPENSHIFT_ANSIBLE_DIR
     env.OPENSHIFT_ANSIBLE_DIR = OPENSHIFT_ANSIBLE_DIR
     echo "Initialized env.OPENSHIFT_ANSIBLE_DIR: ${env.OPENSHIFT_ANSIBLE_DIR}"
+}
+
+def initialize_openshift_jenkins() {
+    this.initialize_openshift_dir()
+    OPENSHIFT_JENKINS_DIR = "${OPENSHIFT_DIR}/jenkins"
+    dir( OPENSHIFT_DIR ) {
+        sh "git clone ${GITHUB_BASE}/jenkins.git"
+    }
+
+    GITHUB_URLS["jenkins"] = "${GITHUB_BASE}/jenkins.git"
+    GITHUB_BASE_PATHS["jenkins"] = OPENSHIFT_JENKINS_DIR
+    env.OPENSHIFT_JENKINS_DIR = OPENSHIFT_JENKINS_DIR
+    echo "Initialized env.OPENSHIFT_JENKINS_DIR: ${env.OPENSHIFT_JENKINS_DIR}"
 }
 
 /**
@@ -265,19 +324,132 @@ def extract_puddle_name(puddle_output ) {
     return split[ split.size() - 3 ]  // look three back and we should find puddle name
 }
 
-def build_puddle(conf_url, Object...args) {
+def build_puddle(conf_url, keys, Object...args) {
     echo "Building puddle: ${conf_url} with arguments: ${args}"
+    if( keys != null ){
+      echo "Using only signed RPMs with keys: ${keys}"
+    }
+
+    key_opt = (keys != null)?"--keys ${keys}":""
 
     // Ideally, we would call invoke_on_rcm_guest, but jenkins makes it absurd to invoke with conf_url as one of the arguments because the spread operator is not enabled.
     def puddle_output = sh(
             returnStdout: true,
-            script: "ssh ocp-build@rcm-guest.app.eng.bos.redhat.com sh -s ${conf_url} ${this.args_to_string(args)} < ${env.WORKSPACE}/build-scripts/rcm-guest/call_puddle.sh",
+            script: "ssh ocp-build@rcm-guest.app.eng.bos.redhat.com sh -s -- --conf ${conf_url} ${key_opt} ${this.args_to_string(args)} < ${env.WORKSPACE}/build-scripts/rcm-guest/call_puddle.sh",
     ).trim()
 
     echo "Puddle output:\n${puddle_output}"
     def puddle_dir = this.extract_puddle_name( puddle_output )
     echo "Detected puddle directory: ${puddle_dir}"
     return puddle_dir
+}
+
+
+def with_virtualenv(path, f) {
+    final env = [
+        "VIRTUAL_ENV=${path}",
+        "PATH=${path}/bin:${env.PATH}",
+        "PYTHON_HOME=",
+    ]
+    return withEnv(env, f)
+}
+
+// Parse record.log from OIT into a map
+// Records will be formatted in a map like below:
+// rpms/jenkins-slave-maven-rhel7-docker:
+//   source_alias: jenkins
+//   image: openshift3/jenkins-slave-maven-rhel7
+//   dockerfile: /tmp/oit-uEeF2_.tmp/distgits/jenkins-slave-maven-rhel7-docker/Dockerfile
+//   owners: ahaile@redhat.com,smunilla@redhat.com
+//   distgit: rpms/jenkins-slave-maven-rhel7-docker]
+// pms/aos-f5-router-docker:
+//   source_alias: ose
+//   image: openshift3/ose-f5-router
+//   dockerfile: /tmp/oit-uEeF2_.tmp/distgits/aos-f5-router-docker/Dockerfile
+//   owners:
+//   distgit: rpms/aos-f5-router-docker
+def parse_record_log( working_dir ) {
+    def record = readFile( "${working_dir}/record.log" )
+    lines = record.split("\\r?\\n");
+
+    def result = [:]
+    int i = 0
+    int f = 0
+    // loop records and pull type from first field
+    // then create map all all remaining fields
+    for ( i = 0; i < lines.size(); i++ ) {
+        fields = lines[i].tokenize("|")
+        type = fields[0]
+        if(! result.containsKey(type)) {
+            result[type] = []
+        }
+        record = [:]
+        for ( f = 1; f < fields.size(); f++ ){
+            entry = fields[f].tokenize("=")
+            if ( entry.size() == 1 ){
+                record[entry[0]] = null
+            }
+            else {
+                record[entry[0]] = entry[1]
+            }
+        }
+        result[type].add(record)
+    }
+
+    return result
+}
+
+
+// gets map of emails to notify from output of parse_record_log
+// map formatted as below:
+// rpms/jenkins-slave-maven-rhel7-docker
+//   source_alias: jenkins
+//   image: openshift3/jenkins-slave-maven-rhel7
+//   dockerfile: /tmp/oit-uEeF2_.tmp/distgits/jenkins-slave-maven-rhel7-docker/Dockerfile
+//   owners: bparees@redhat.com
+//   distgit: rpms/jenkins-slave-maven-rhel7-docker
+//   sha: 1b8903ef72878cd895b3f94bee1c6f5d60ce95c3
+def get_distgit_notify( record_log ) {
+    def result = [:]
+    // It's possible there were no commits or no one specified to notify
+    if ( ! record_log.containsKey("distgit_commit") || ! record_log.containsKey("dockerfile_notify")) {
+        return result
+    }
+
+    commit = record_log["distgit_commit"]
+    notify = record_log["dockerfile_notify"]
+
+    int i = 0
+    // get notification emails by distgit name
+    for ( i = 0; i < notify.size(); i++ ) {
+        result[notify[i]["distgit"]] = notify[i]
+    }
+
+    // match commit hash with notify email record
+    for ( i = 0; i < commit.size(); i++ ) {
+      if(result.containsKey(commit[i]["distgit"])){
+        result[commit[i]["distgit"]]["sha"] = commit[i]["sha"]
+      }
+    }
+
+    return result
+
+}
+
+def write_sources_file() {
+  sources = """ose: ${env.OSE_DIR}
+jenkins: ${env.OPENSHIFT_JENKINS_DIR}
+openshift-ansible: ${env.OPENSHIFT_ANSIBLE_DIR}
+  """
+  writeFile(file: "${env.WORKSPACE}/sources.yml", text: sources)
+}
+
+//https://stackoverflow.com/a/42775560
+@NonCPS
+List<List<?>> mapToList(Map map) {
+  return map.collect { it ->
+    [it.key, it.value]
+  }
 }
 
 return this

@@ -7,14 +7,23 @@ from subprocess import check_output
 from os import getenv, listdir
 from os.path import join
 
-timestamp = int((datetime.now() - datetime(1970,1,1)).total_seconds())
+timestamp = int((datetime.utcnow() - datetime(1970,1,1)).total_seconds())
 node_name = check_output(["uname", "--nodename"]).strip()
 jenkins_node_name = "ci.openshift"  # today only one master schedules jobs
 
 repos = {}
 
+repo_owner = getenv("REPO_OWNER", "")
+repo_name = getenv("REPO_NAME", "")
+pull_refs = getenv("PULL_REFS", "")
+if len(repo_owner) > 0 and len(repo_name) > 0:
+    repos["{}/{}".format(repo_owner,repo_name)] = pull_refs
+
 repository_base_dir = "/data/src/github.com/openshift"
 for repository in listdir(repository_base_dir):
+    if len(repo_name) > 0 and repository == repo_name:
+        continue
+
     repository_dir = join(repository_base_dir, repository)
 
     version_info = ""
@@ -62,12 +71,14 @@ version = check_output(
 # format and layout of this file so we can
 # plug in to systems like Gubernator
 with open("/data/started.json", "w+") as started_file:
-    dump({
+    obj = {
         "timestamp": timestamp,
         "node": node_name,
         "jenkins-node": jenkins_node_name,
-        "pull": repos["openshift/origin"],
         "version": version,
         "repos": repos,
         "repo-version": version
-    }, started_file)
+    }
+    if len(repo_owner) > 0 and len(repo_name) > 0:
+        obj["pull"] = repos["{}/{}".format(repo_owner,repo_name)]
+    dump(obj, started_file)

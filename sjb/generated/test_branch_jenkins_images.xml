@@ -34,6 +34,21 @@
           <defaultValue></defaultValue>
         </hudson.model.StringParameterDefinition>
         <hudson.model.StringParameterDefinition>
+          <name>BUILD_ID</name>
+          <description>The ID that prow sets on a Jenkins job in order to correlate it with a ProwJob.</description>
+          <defaultValue></defaultValue>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>REPO_OWNER</name>
+          <description>GitHub org that triggered the job.</description>
+          <defaultValue></defaultValue>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>REPO_NAME</name>
+          <description>GitHub repo that triggered the job.</description>
+          <defaultValue></defaultValue>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
           <name>JENKINS_TARGET_BRANCH</name>
           <description>The branch in the &lt;a href=&quot;https://github.com/openshift/jenkins&quot;&gt;jenkins&lt;/a&gt; repository to test against.</description>
           <defaultValue>master</defaultValue>
@@ -46,6 +61,21 @@
         <hudson.model.StringParameterDefinition>
           <name>buildId</name>
           <description>The ID that prow sets on a Jenkins job in order to correlate it with a ProwJob.</description>
+          <defaultValue></defaultValue>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>BUILD_ID</name>
+          <description>The ID that prow sets on a Jenkins job in order to correlate it with a ProwJob.</description>
+          <defaultValue></defaultValue>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>REPO_OWNER</name>
+          <description>GitHub org that triggered the job.</description>
+          <defaultValue></defaultValue>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>REPO_NAME</name>
+          <description>GitHub repo that triggered the job.</description>
           <defaultValue></defaultValue>
         </hudson.model.StringParameterDefinition>
       </parameterDefinitions>
@@ -115,9 +145,15 @@ ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel sudo chmod 
 ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel &#34;echo &#39;SOURCE_TO_IMAGE_TARGET_BRANCH=${SOURCE_TO_IMAGE_TARGET_BRANCH:-}&#39; &gt;&gt; /etc/environment&#34;
 ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel &#34;echo &#39;PULL_REFS=${PULL_REFS:-}&#39; &gt;&gt; /etc/environment&#34;
 ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel &#34;echo &#39;buildId=${buildId:-}&#39; &gt;&gt; /etc/environment&#34;
+ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel &#34;echo &#39;BUILD_ID=${BUILD_ID:-}&#39; &gt;&gt; /etc/environment&#34;
+ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel &#34;echo &#39;REPO_OWNER=${REPO_OWNER:-}&#39; &gt;&gt; /etc/environment&#34;
+ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel &#34;echo &#39;REPO_NAME=${REPO_NAME:-}&#39; &gt;&gt; /etc/environment&#34;
 ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel &#34;echo &#39;JENKINS_TARGET_BRANCH=${JENKINS_TARGET_BRANCH:-}&#39; &gt;&gt; /etc/environment&#34;
 ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel &#34;echo &#39;PULL_REFS=${PULL_REFS:-}&#39; &gt;&gt; /etc/environment&#34;
 ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel &#34;echo &#39;buildId=${buildId:-}&#39; &gt;&gt; /etc/environment&#34;
+ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel &#34;echo &#39;BUILD_ID=${BUILD_ID:-}&#39; &gt;&gt; /etc/environment&#34;
+ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel &#34;echo &#39;REPO_OWNER=${REPO_OWNER:-}&#39; &gt;&gt; /etc/environment&#34;
+ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel &#34;echo &#39;REPO_NAME=${REPO_NAME:-}&#39; &gt;&gt; /etc/environment&#34;
 </command>
         </hudson.tasks.Shell>
         <hudson.tasks.Shell>
@@ -165,7 +201,7 @@ rm -rf \$contextdir/repos/local_epel.repo
 # Add the online-int repo which has the latest jenkins rpms
 cat &lt;&lt;EOF &gt; \$contextdir/repos/rhel-7-server-ose-onlineint-rpms.repo
 [rhel-7-server-ose-onlineint-rpms]
-baseurl = https://mirror.openshift.com/enterprise/online-int/latest/RH7-RHAOS-3.6/x86_64/os/
+baseurl = https://mirror.openshift.com/enterprise/online-int/latest/x86_64/os/
 failovermethod = priority
 gpgcheck = 0
 gpgkey = file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release, file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-beta, https://mirror.ops.rhcloud.com/libra/keys/RPM-GPG-KEY-redhat-openshifthosted
@@ -178,7 +214,7 @@ EOF
 
 # create Dockerfile
 cat &lt;&lt;EOF &gt; \$contextdir/Dockerfile
-FROM registry.access.redhat.com/rhel7.3:latest
+FROM registry.access.redhat.com/openshift3/ose:latest
 
 RUN yum remove -y subscription-manager
 
@@ -188,15 +224,17 @@ ADD certs/* /var/lib/yum/
 ADD keys/* /etc/pki/rpm-gpg/
 
 RUN yum update -y &amp;&amp; yum clean all
-
+ENTRYPOINT []
 EOF
 
-docker build --rm -t registry.access.redhat.com/rhel7.3 \$contextdir
+docker build --rm -t registry.access.redhat.com/openshift3/ose \$contextdir
 
-# make sure the new rhel7.3 image has valid certs
-docker run registry.access.redhat.com/rhel7.3 yum install -y tar
+# make sure the new image has valid certs
+docker run registry.access.redhat.com/openshift3/ose yum install -y tar
 
-docker tag registry.access.redhat.com/rhel7.3 registry.access.redhat.com/rhel7
+# remove these once no one is referencing them anymore.
+docker tag registry.access.redhat.com/openshift3/ose registry.access.redhat.com/rhel7.3
+docker tag registry.access.redhat.com/openshift3/ose registry.access.redhat.com/rhel7
 
 # cleaning
 rm -rf \$contextdir
@@ -296,6 +334,19 @@ oct deprovision</command>
       </pluginFailureResultConstraint>
       <userMetadata/>
     </hudson.plugins.s3.S3BucketPublisher>
+    <hudson.plugins.ws__cleanup.WsCleanup plugin="ws-cleanup@0.34">
+      <patterns class="empty-list"/>
+      <deleteDirs>false</deleteDirs>
+      <skipWhenFailed>false</skipWhenFailed>
+      <cleanWhenSuccess>true</cleanWhenSuccess>
+      <cleanWhenUnstable>true</cleanWhenUnstable>
+      <cleanWhenFailure>true</cleanWhenFailure>
+      <cleanWhenNotBuilt>true</cleanWhenNotBuilt>
+      <cleanWhenAborted>true</cleanWhenAborted>
+      <notFailBuild>false</notFailBuild>
+      <cleanupMatrixParent>false</cleanupMatrixParent>
+      <externalDelete></externalDelete>
+    </hudson.plugins.ws__cleanup.WsCleanup>
   </publishers>
   <buildWrappers>
     <hudson.plugins.ws__cleanup.PreBuildCleanup plugin="ws-cleanup@0.32">
@@ -303,9 +354,6 @@ oct deprovision</command>
       <cleanupParameter></cleanupParameter>
       <externalDelete></externalDelete>
     </hudson.plugins.ws__cleanup.PreBuildCleanup>
-    <hudson.plugins.ansicolor.AnsiColorBuildWrapper plugin="ansicolor@0.4.2">
-      <colorMapName>xterm</colorMapName>
-    </hudson.plugins.ansicolor.AnsiColorBuildWrapper>
   </buildWrappers>
   <pollSubjobs>false</pollSubjobs>
 </com.tikal.jenkins.plugins.multijob.MultiJobProject>

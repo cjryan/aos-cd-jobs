@@ -260,9 +260,9 @@ oct package ami --mark-ready</command>
           <command>#!/bin/bash
 SCRIPT_START_TIME=&#34;$( date +%s )&#34; &amp;&amp; export SCRIPT_START_TIME &amp;&amp; echo &#34;########## STARTING STAGE: DOWNLOAD ARTIFACTS FROM THE REMOTE HOST ##########&#34; &amp;&amp; trap &#39;export status=FAILURE&#39; ERR &amp;&amp; trap &#39;set +o xtrace; SCRIPT_END_TIME=&#34;$( date +%s )&#34;; ELAPSED_TIME=&#34;$(( SCRIPT_END_TIME - SCRIPT_START_TIME ))&#34;; echo &#34;########## FINISHED STAGE: ${status:-SUCCESS}: DOWNLOAD ARTIFACTS FROM THE REMOTE HOST [$( printf &#34;%02dh %02dm %02ds&#34; &#34;$(( ELAPSED_TIME/3600 ))&#34; &#34;$(( (ELAPSED_TIME%3600)/60 ))&#34; &#34;$(( ELAPSED_TIME%60 ))&#34; )] ##########&#34;&#39; EXIT &amp;&amp; set -o errexit -o nounset -o pipefail -o xtrace &amp;&amp; if [[ -s &#34;${WORKSPACE}/activate&#34; ]]; then source &#34;${WORKSPACE}/activate&#34;; fi
 trap &#39;exit 0&#39; EXIT
-ARTIFACT_DIR=&#34;$( pwd )/artifacts&#34;
+ARTIFACT_DIR=&#34;$( pwd )/artifacts/gathered&#34;
 rm -rf &#34;${ARTIFACT_DIR}&#34;
-mkdir &#34;${ARTIFACT_DIR}&#34;
+mkdir -p &#34;${ARTIFACT_DIR}&#34;
 if ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel sudo stat /data/src/github/openshift/origin/_output/scripts; then
     ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel sudo chmod -R o+rX /data/src/github/openshift/origin/_output/scripts
     scp -r -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel:/data/src/github/openshift/origin/_output/scripts &#34;${ARTIFACT_DIR}&#34;
@@ -291,7 +291,10 @@ rm -rf &#34;${ARTIFACT_DIR}&#34;
 mkdir &#34;${ARTIFACT_DIR}&#34;
 ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel sudo journalctl --unit docker.service --no-pager --all --lines=all &gt;&gt; &#34;${ARTIFACT_DIR}/docker.service&#34;
 ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel sudo journalctl --unit origin-master.service --no-pager --all --lines=all &gt;&gt; &#34;${ARTIFACT_DIR}/origin-master.service&#34;
+ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel sudo journalctl --unit origin-master-api.service --no-pager --all --lines=all &gt;&gt; &#34;${ARTIFACT_DIR}/origin-master-api.service&#34;
+ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel sudo journalctl --unit origin-master-controllers.service --no-pager --all --lines=all &gt;&gt; &#34;${ARTIFACT_DIR}/origin-master-controllers.service&#34;
 ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel sudo journalctl --unit origin-node.service --no-pager --all --lines=all &gt;&gt; &#34;${ARTIFACT_DIR}/origin-node.service&#34;
+ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel sudo journalctl --unit systemd-journald.service --no-pager --all --lines=all &gt;&gt; &#34;${ARTIFACT_DIR}/systemd-journald.service&#34;
 tree &#34;${ARTIFACT_DIR}&#34; </command>
         </hudson.tasks.Shell>
         <hudson.tasks.Shell>
@@ -351,6 +354,19 @@ oct deprovision</command>
       </pluginFailureResultConstraint>
       <userMetadata/>
     </hudson.plugins.s3.S3BucketPublisher>
+    <hudson.plugins.ws__cleanup.WsCleanup plugin="ws-cleanup@0.34">
+      <patterns class="empty-list"/>
+      <deleteDirs>false</deleteDirs>
+      <skipWhenFailed>false</skipWhenFailed>
+      <cleanWhenSuccess>true</cleanWhenSuccess>
+      <cleanWhenUnstable>true</cleanWhenUnstable>
+      <cleanWhenFailure>true</cleanWhenFailure>
+      <cleanWhenNotBuilt>true</cleanWhenNotBuilt>
+      <cleanWhenAborted>true</cleanWhenAborted>
+      <notFailBuild>false</notFailBuild>
+      <cleanupMatrixParent>false</cleanupMatrixParent>
+      <externalDelete></externalDelete>
+    </hudson.plugins.ws__cleanup.WsCleanup>
   </publishers>
   <buildWrappers>
     <hudson.plugins.ws__cleanup.PreBuildCleanup plugin="ws-cleanup@0.32">
@@ -358,9 +374,6 @@ oct deprovision</command>
       <cleanupParameter></cleanupParameter>
       <externalDelete></externalDelete>
     </hudson.plugins.ws__cleanup.PreBuildCleanup>
-    <hudson.plugins.ansicolor.AnsiColorBuildWrapper plugin="ansicolor@0.4.2">
-      <colorMapName>xterm</colorMapName>
-    </hudson.plugins.ansicolor.AnsiColorBuildWrapper>
   </buildWrappers>
   <pollSubjobs>false</pollSubjobs>
 </com.tikal.jenkins.plugins.multijob.MultiJobProject>

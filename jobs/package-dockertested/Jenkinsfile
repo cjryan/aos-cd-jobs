@@ -11,14 +11,6 @@ def runScript(script) {
 }
 node('openshift-build-1') {
 	properties ([[
-		$class: 'ParametersDefinitionProperty',
-		parameterDefinitions: [[
-			$class: 'BooleanParameterDefinition',
-			defaultValue: false,
-			description: 'Destroy the previous <code>virtualenv</code> and install the <code>origin-ci-tool</code> from scratch.',
-			name: 'CLEAN_INSTALL'
-		]]
-	],[
 		$class: 'PipelineTriggersJobProperty',
 		triggers: [[
 			$class: 'TimerTrigger',
@@ -52,12 +44,9 @@ node('openshift-build-1') {
 	}
 	venv_dir = "${env.WORKSPACE}/origin-ci-tool"
 	stage ('Create a virtualenv for the origin-ci-tool') {
-		if ( CLEAN_INSTALL.toBoolean() ) {
-			sh "rm -rf ${venv_dir}"
-			sh "rm -rf ${env.WORKSPACE}/.config"
-			sh "virtualenv ${venv_dir} --system-site-packages"
-		}
-		sh "test -d ${venv_dir}"
+		sh "rm -rf ${venv_dir}"
+		sh "rm -rf ${env.WORKSPACE}/.config"
+		sh "virtualenv ${venv_dir} --system-site-packages"
 	}
 	stage ('Fetch the scripts') {
 	    checkout scm
@@ -70,8 +59,20 @@ node('openshift-build-1') {
 		"ANSIBLE_SSH_CONTROL_PATH_DIR=${env.HOME}/.ansible/cp",
 		"ANSIBLE_SSH_CONTROL_PATH=%(directory)s/%%h-%%p-%%r"
 	]) {
+		stage ('Debug variables') {
+			echo "${env.VIRTUAL_ENV}"
+			echo "${env.PATH}"
+			echo "${env.PYTHON_HOME}"
+			echo "${env.OCT_CONFIG_HOME}"
+			echo "${env.ANSIBLE_SSH_CONTROL_PATH_DIR}"
+			echo "${env.ANSIBLE_SSH_CONTROL_PATH}"
+			sh "which python"
+			sh "which python2"
+			sh "which pip"
+			sh "pip --version"
+		}
 		stage ('Install dependencies in the virtualenv') {
-			sh "pip install --ignore-installed --upgrade pip"
+			sh "python -m pip install --ignore-installed --upgrade pip"
 			sh 'pip install --ignore-installed boto boto3'
 		}
 		stage ('Install the origin-ci-tool') {
@@ -94,11 +95,15 @@ node('openshift-build-1') {
 			stage ('Configure TMPFS') {
 				runScript './configure-tmpfs.sh'
 			}
+			stage ('Install the RHEL7Next repositories') {
+				sh "scp -F ${ssh_config} ./rhel7next.repo openshiftdevel:/tmp/rhel7next.repo"
+				sh "ssh -F ${ssh_config} openshiftdevel \"sudo mv /tmp/rhel7next.repo /etc/yum.repos.d/\""
+			}
 			stage ('Install distribution dependencies') {
 				sh 'oct prepare dependencies'
 			}
 			stage ('Install Golang') {
-				sh 'oct prepare golang --version 1.7.5 --repourl https://cbs.centos.org/repos/paas7-openshift-origin36-candidate/x86_64/os/'
+				sh 'oct prepare golang --version 1.8.3 --repourl https://cbs.centos.org/repos/paas7-openshift-origin37-candidate/x86_64/os/'
 			}
 			stage ('Install Docker') {
 				sh 'oct prepare docker --repo "rhel7next*"'
@@ -141,12 +146,12 @@ node('openshift-build-1') {
 			}
 			if ( currentBuild.result != 'FAILURE' ) {
 				stage ('Update the state of the dockertested repo') {
-					sh 'kinit -k -t /home/jenkins/ocp-build.keytab ocp-build/atomic-e2e-jenkins.rhev-ci-vms.eng.rdu2.redhat.com@REDHAT.COM'
+					sh 'kinit -k -t /home/jenkins/ocp-build-buildvm.openshift.eng.bos.redhat.com.keytab ocp-build/buildvm.openshift.eng.bos.redhat.com@REDHAT.COM'
 					sh "ssh ocp-build@rcm-guest.app.eng.bos.redhat.com /mnt/rcm-guest/puddles/RHAOS/scripts/update-dockertested-repo.sh ${docker_rpm} ${container_selinux_rpm} ${container_storage_setup_rpm} ${skopeo_rpm} ${atomic_rpm}"
 				}
 				stage ('Send out an e-mail about new versions') {
 					mail (
-						to: 'aos-devel@redhat.com',
+						to: 'aos-cicd@redhat.com',
 						cc: 'skuznets@redhat.com',
 						subject: "${docker_rpm} and dependencies pushed to dockertested repository",
 						body: """The latest job[1] marked the following RPMs as successful:

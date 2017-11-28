@@ -18,28 +18,32 @@ PS4='${LINENO}: '
 set -o xtrace
 
 ## LOCAL VARIABLES ##
-MASTER_RELEASE="3.7"    # Update version_trim_list when this changes
+MASTER_RELEASE="3.8"    # Update version_trim_list when this changes
 MAJOR_RELEASE="${MASTER_RELEASE}"  # This is a default if --branch is not specified
+MINOR_RELEASE=$(echo ${MAJOR_RELEASE} | cut -d'.' -f2)
 
-MAJOR_MAJOR=$(echo "$MAJOR_RELEASE" | cut -d . -f 1)
-MAJOR_MINOR=$(echo "$MAJOR_RELEASE" | cut -d . -f 2)
+RELEASE_MAJOR=$(echo "$MAJOR_RELEASE" | cut -d . -f 1)
+RELEASE_MINOR=$(echo "$MAJOR_RELEASE" | cut -d . -f 2)
 
 DIST_GIT_BRANCH="rhaos-${MAJOR_RELEASE}-rhel-7"
 #DIST_GIT_BRANCH="rhaos-3.2-rhel-7-candidate"
 #DIST_GIT_BRANCH="rhaos-3.1-rhel-7"
 SCRATCH_OPTION=""
-BUILD_REPO="http://download.lab.bos.redhat.com/rcm-guest/puddles/RHAOS/repos/aos-unsigned-building.repo"
+BUILD_REPO="https://raw.githubusercontent.com/openshift/aos-cd-jobs/master/build-scripts/repo-conf/aos-unsigned-building.repo"
 COMMIT_MESSAGE=""
 PULL_REGISTRY=brew-pulp-docker01.web.prod.ext.phx2.redhat.com:8888
-PUSH_REGISTRY=registry-push.ops.openshift.com
+PUSH_REGISTRY=registry.reg-aws.openshift.com:443
 ERRATA_ID="24510"
 ERRATA_PRODUCT_VERSION="RHEL-7-OSE-${MAJOR_RELEASE}"
 SCRIPT_HOME="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
+trap "exit 1" TERM
 export TOP_PID=$$
 
+# Hard exit is designed to terminate the script even in cases
+# where a function is being used like $(func).
 hard_exit() {
-    kill "$TOP_PID"
+    kill -s TERM "$TOP_PID"
 }
 
 usage() {
@@ -48,6 +52,7 @@ usage() {
   echo "Actions:" >&2
   echo "  build build_container :: Build containers in OSBS" >&2
   echo "  push push_images :: Push images to qe-registry" >&2
+  echo "  scan_images      :: Scan images with openscap" >&2
   echo "  compare_git      :: Compare dist-git Dockerfile and other files with those in git" >&2
   echo "  compare_auto     :: Auto compare dist-git files with those in git. Sends Dockerfile diff in email" >&2
   echo "  compare_nodocker :: Compare dist-git files with those in git.  Show but do not change Dockerfile changes" >&2
@@ -119,9 +124,15 @@ add_group_to_list() {
         add_to_list openshift-enterprise-haproxy-router-docker
       else
         add_to_list openshift-enterprise-pod-docker
-        add_to_list aos3-installation-docker
+        # Removed for OIT testing
+        # add_to_list aos3-installation-docker
         add_to_list openshift-enterprise-docker
-        add_to_list openshift-enterprise-dockerregistry-docker
+
+          # dockerregistry moving to its own github repo in 3.8
+          if [[ "${RELEASE_MAJOR}" == 3 && "${RELEASE_MINOR}" -lt 8 ]]; then
+                add_to_list openshift-enterprise-dockerregistry-docker
+          fi
+
         add_to_list openshift-enterprise-egress-router-docker
         add_to_list openshift-enterprise-keepalived-ipfailover-docker
         add_to_list aos-f5-router-docker
@@ -131,11 +142,14 @@ add_group_to_list() {
         add_to_list openshift-enterprise-recycler-docker
         add_to_list openshift-enterprise-sti-builder-docker
         add_to_list openshift-enterprise-docker-builder-docker
-        add_to_list logging-deployment-docker
+	if [ ${MAJOR_RELEASE} == "3.4" ]; then
+	 	# This is no longer required after moving to ansible
+        	add_to_list logging-deployment-docker
+	        add_to_list metrics-deployer-docker
+	fi
         add_to_list logging-curator-docker
-        add_to_list metrics-deployer-docker
         if [ ${MAJOR_RELEASE} != "3.3" ] && [ ${MAJOR_RELEASE} != "3.4" ]  && [ ${MAJOR_RELEASE} != "3.5" ] ; then
-          add_to_list logging-auth-proxy-docker  
+          add_to_list logging-auth-proxy-docker
           add_to_list logging-elasticsearch-docker
           add_to_list logging-fluentd-docker
           add_to_list logging-kibana-docker
@@ -145,13 +159,20 @@ add_group_to_list() {
           add_to_list metrics-heapster-docker
           add_group_to_list "jenkins"
           add_to_list registry-console-docker
-          add_group_to_list "asb"
+          #add_group_to_list "asb"
           add_to_list openshift-enterprise-service-catalog-docker
           add_to_list openshift-enterprise-federation-docker
           add_to_list openshift-enterprise-cluster-capacity-docker
           add_to_list container-engine-docker
           add_to_list ose-egress-http-proxy-docker
         fi
+        if [ ${MAJOR_RELEASE} == "3.7" ] || [ ${MAJOR_RELEASE} == "3.8" ]; then
+          add_to_list golang-github-prometheus-prometheus-docker
+          add_to_list golang-github-prometheus-alertmanager-docker
+          add_to_list golang-github-openshift-prometheus-alert-buffer-docker
+	      add_to_list golang-github-openshift-oauth-proxy-docker
+	      add_to_list logging-eventrouter-docker
+	    fi
         add_to_list openshift-enterprise-openvswitch-docker
       fi
     ;;
@@ -162,16 +183,17 @@ add_group_to_list() {
       fi
     ;;
     installer)
-      add_to_list playbook2image-docker
-      add_to_list aos3-installation-docker
+      echo "aos3-installation-docker not available"
+      # Disabled for OIT testing
+      # add_to_list aos3-installation-docker
     ;;
-    asb)
-          add_to_list openshift-enterprise-mediawiki-docker
-          add_to_list openshift-enterprise-apb-base-docker
-          add_to_list openshift-enterprise-asb-docker
-          add_to_list openshift-enterprise-mediawiki
-          add_to_list openshift-enterprise-postgresql
-    ;;
+    #asb)  # Should move to oit management
+    #      add_to_list openshift-enterprise-mediawiki-docker
+    #      add_to_list openshift-enterprise-apb-base-docker
+    #      add_to_list openshift-enterprise-asb-docker
+    #      add_to_list openshift-enterprise-mediawiki
+    #      add_to_list openshift-enterprise-postgresql
+    #;;
     rhel-extras)
       add_to_list etcd-docker
       add_to_list etcd3-docker
@@ -181,20 +203,20 @@ add_group_to_list() {
       if [ ${MAJOR_RELEASE} == "3.1" ] || [ ${MAJOR_RELEASE} == "3.2" ] ; then
         add_to_list logging-deployment-docker
       else
-        add_to_list logging-curator-docker       
+        add_to_list logging-curator-docker
       fi
       add_to_list logging-elasticsearch-docker
       add_to_list logging-fluentd-docker
       add_to_list logging-kibana-docker
     ;;
     jenkins | jenkins-all )
-      add_to_list openshift-jenkins-docker
+      if [[ "${RELEASE_MAJOR}" == 3 && "${RELEASE_MINOR}" -lt 7 ]]; then
+        add_to_list openshift-jenkins-docker
+      fi
       if [ ${MAJOR_RELEASE} != "3.1" ] && [ ${MAJOR_RELEASE} != "3.2" ] && [ ${MAJOR_RELEASE} != "3.3" ] ; then
         add_to_list openshift-jenkins-2-docker
       fi
-      add_to_list jenkins-slave-base-rhel7-docker
-      add_to_list jenkins-slave-maven-rhel7-docker
-      add_to_list jenkins-slave-nodejs-rhel7-docker
+      add_group_to_list "jenkins-slaves"
     ;;
     jenkins-plain )
       add_to_list openshift-jenkins-docker
@@ -203,9 +225,12 @@ add_group_to_list() {
       fi
     ;;
     jenkins-slaves )
-      add_to_list jenkins-slave-base-rhel7-docker
-      add_to_list jenkins-slave-maven-rhel7-docker
-      add_to_list jenkins-slave-nodejs-rhel7-docker
+      # if [ ${MAJOR_RELEASE} != "3.7" ] ; then
+      if false; then  # temporary for initial testing. In case it needs to come back.
+        add_to_list jenkins-slave-base-rhel7-docker
+        add_to_list jenkins-slave-maven-rhel7-docker
+        add_to_list jenkins-slave-nodejs-rhel7-docker
+      fi
     ;;
     metrics)
       add_to_list metrics-cassandra-docker
@@ -240,7 +265,8 @@ add_group_to_list() {
         add_to_list openshift-enterprise-haproxy-router-docker
       else
         add_to_list openshift-enterprise-pod-docker
-        add_to_list aos3-installation-docker
+        # Removed for OIT testing
+        # add_to_list aos3-installation-docker
         add_to_list openshift-enterprise-docker
         add_to_list openshift-enterprise-dockerregistry-docker
         add_to_list openshift-enterprise-egress-router-docker
@@ -261,14 +287,14 @@ add_group_to_list() {
       add_to_list oso-accountant-docker
       add_to_list oso-notifications-docker
       # add_to_list oso-reconciler-docker    ## Deprecated per vdinh
-      add_to_list oso-user-analytics-docker
+      # add_to_list oso-user-analytics-docker  ## Deprecated per vdinh
     ;;
     efs)
       add_to_list efs-provisioner-docker
     ;;
     egress)
       add_to_list openshift-enterprise-egress-router-docker
-      add_to_list ose-egress-http-proxy-docker     
+      add_to_list ose-egress-http-proxy-docker
     ;;
   esac
 }
@@ -310,14 +336,17 @@ setup_dockerfile() {
   if [ "$ctype" == "" ]; then
     ctype="rpms"
   fi
-  wget -q -O Dockerfile http://pkgs.devel.redhat.com/cgit/${ctype}/${container}/plain/Dockerfile?h=${branch} &>/dev/null
-  test_file="$(head -n 1 Dockerfile | awk '{print $1}')"
-  if [ "${test_file}" == "" ] ; then
-    rm -f Dockerfile
-    wget -q -O Dockerfile http://dist-git.app.eng.bos.redhat.com/cgit/${ctype}/${container}/plain/Dockerfile.product?h=${branch} &>/dev/null
-  elif [ "${test_file}" == "Dockerfile.product" ] || [ "${test_file}" == "Dockerfile.rhel7" ] ; then
-    rm -f Dockerfile
-    wget -q -O Dockerfile http://pkgs.devel.redhat.com/cgit/${ctype}/${container}/plain/${test_file}?h=${branch} &>/dev/null
+
+  wget -q -O Dockerfile http://dist-git.host.prod.eng.bos.redhat.com/cgit/${ctype}/${container}/plain/Dockerfile?h=${branch}
+  if [ "$?" != "0" ]; then
+    wget -q -O Dockerfile http://pkgs.devel.redhat.com/cgit/${ctype}/${container}/plain/Dockerfile?h=${branch}
+    if [ "$?" != "0" ]; then
+        wget -q -O Dockerfile http://pkgs.devel.redhat.com/cgit/${ctype}/${container}.git/plain/Dockerfile?h=${branch}
+        if [ "$?" != "0" ]; then
+            echo "Unable to download Dockerfile"
+            exit 1
+        fi
+    fi
   fi
   popd >/dev/null
 }
@@ -340,15 +369,15 @@ setup_git_repo() {
 
   # get the name of the repo so we can cd into that directory for branch checkout
   repo_name=$(echo "${git_path}/" | cut -d "/" -f 1)
-  
+
   # Clone the repo if it has not been cloned already
   if [ ! -d "${repo_name}" ]; then
-    git clone -q ${git_base_url} 
+    git clone -q ${git_base_url}
   fi
-  
-  cd "${repo_name}" 
+
+  cd "${repo_name}"
   # if there was a branch named in the git_repo, use it
-  if [ ! -z "${branch_override}" ] ; then  
+  if [ ! -z "${branch_override}" ] ; then
     git checkout "${branch_override}"
   else
     # Otherwise, switch to master. Don't assume we are there already, since this
@@ -357,11 +386,11 @@ setup_git_repo() {
   fi
   # we are in the repo dir git_path is relative to the workingdir, so move up one dir
   cd ..
-  
+
   pushd "${git_path}" >/dev/null
   set +e # back to ignoring errors
-  
-  # If we are running in online:stg mode, we want to update dist-git with 
+
+  # If we are running in online:stg mode, we want to update dist-git with
   # content from the stage branch, not from master.
   if [ "${git_branch}" == "master" -a "${BUILD_MODE}" == "online:stg" ]; then
     # See if this repo has a stage branch
@@ -370,7 +399,7 @@ setup_git_repo() {
         echo "Running in stage branch of: ${git_repo}"
     fi
   fi
-    
+
   popd >/dev/null
   popd >/dev/null
 
@@ -441,20 +470,47 @@ check_builds() {
               echo "Package with same NVR has already been built"
               echo "::${package}::" >> ${workingdir}/logs/prebuilt
           else
-              echo "::${package}::" >> ${workingdir}/logs/buildfailed
-              echo "Failed logs"
-              ls -1 ${package}.*
-              cp -f ${package}.* ${workingdir}/logs/failed-logs/
+
+                RF="${workingdir}/retries"
+                if [ -f "$RF" ]; then
+                    retries="$(cat $RF)"
+                else
+                    retries="10"
+                fi
+
+                retries=$(($retries - 1))
+                echo -n "$retries" > $RF
+
+              if [ "$retries" == "0" ]; then
+                  echo "::${package}::" >> ${workingdir}/logs/buildfailed
+                  echo "Failed logs"
+                  ls -1 ${package}.*
+                  cp -f ${package}.* ${workingdir}/logs/failed-logs/
+              else
+                    echo "Detected failed build: ${package} but there are $retries left, so triggering it again in 5 minutes."
+                    echo "Failed brew URL: https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=${taskid}"
+		            sleep 300
+                    export container="$package"
+                    F="$FORCE"
+                    export FORCE="TRUE"
+                    start_build_image
+                    export FORCE="$F"  # Restore old value after the call
+
+                    # Pretend the build never terminated with an error
+                    continue
+              fi
           fi
       fi
       mv ${line} ${package}.watchlog done/
     fi
   done
-  
+
   popd >/dev/null
 }
 
 wait_for_all_builds() {
+
+  # While there are .buildlog files in workindir/logs, builds are still running
   buildcheck=`ls -1 ${workingdir}/logs/*buildlog 2>/dev/null`
   while ! [ "${buildcheck}" == "" ]
   do
@@ -465,7 +521,7 @@ wait_for_all_builds() {
     check_builds
     buildcheck=`ls -1 ${workingdir}/logs/*buildlog 2>/dev/null`
   done
-  
+
   echo "=== PREBUILT PACKAGES ==="
   cat ${workingdir}/logs/prebuilt
   echo
@@ -481,8 +537,8 @@ wait_for_all_builds() {
       cat "${workingdir}/logs/failed-logs/${line}"
       echo
     done
-    
-    echo "Failed build occured. Exiting."
+
+    echo "Failed build occurred. Exiting."
     hard_exit
   fi
 }
@@ -509,13 +565,13 @@ check_build_dependencies() {
 }
 
 build_image() {
-    rhpkg ${USER_USERNAME} container-build ${SCRATCH_OPTION} --repo ${BUILD_REPO} >> ${workingdir}/logs/${container}.buildlog 2>&1 &
-    #rhpkg container-build --repo http://download.lab.bos.redhat.com/rcm-guest/puddles/RHAOS/repos/aos-unsigned-building.repo >> ${workingdir}/logs/${container}.buildlog 2>&1 &
-    #rhpkg container-build --repo http://download.lab.bos.redhat.com/rcm-guest/puddles/RHAOS/repos/aos-unsigned-latest.repo >> ${workingdir}/logs/${container}.buildlog 2>&1 &
-    #rhpkg container-build --repo http://download.lab.bos.redhat.com/rcm-guest/puddles/RHAOS/repos/aos-unsigned-errata-building.repo >> ${workingdir}/logs/${container}.buildlog 2>&1 &
-    #rhpkg container-build --repo http://download.lab.bos.redhat.com/rcm-guest/puddles/RHAOS/repos/aos-unsigned-errata-latest.repo >> ${workingdir}/logs/${container}.buildlog 2>&1 &
-    #rhpkg container-build --repo http://download.lab.bos.redhat.com/rcm-guest/puddles/RHAOS/repos/aos-signed-building.repo >> ${workingdir}/logs/${container}.buildlog 2>&1 &
-    #rhpkg container-build --repo http://download.lab.bos.redhat.com/rcm-guest/puddles/RHAOS/repos/aos-signed-latest.repo >> ${workingdir}/logs/${container}.buildlog 2>&1 &
+    rhpkg ${USER_USERNAME} container-build ${SCRATCH_OPTION} --repo ${BUILD_REPO} > ${workingdir}/logs/${container}.buildlog 2>&1 &
+    #rhpkg container-build --repo https://raw.githubusercontent.com/openshift/aos-cd-jobs/master/build-scripts/repo-conf/aos-unsigned-building.repo >> ${workingdir}/logs/${container}.buildlog 2>&1 &
+    #rhpkg container-build --repo https://raw.githubusercontent.com/openshift/aos-cd-jobs/master/build-scripts/repo-conf/aos-unsigned-latest.repo >> ${workingdir}/logs/${container}.buildlog 2>&1 &
+    #rhpkg container-build --repo https://raw.githubusercontent.com/openshift/aos-cd-jobs/master/build-scripts/repo-conf/aos-unsigned-errata-building.repo >> ${workingdir}/logs/${container}.buildlog 2>&1 &
+    #rhpkg container-build --repo https://raw.githubusercontent.com/openshift/aos-cd-jobs/master/build-scripts/repo-conf/aos-unsigned-errata-latest.repo >> ${workingdir}/logs/${container}.buildlog 2>&1 &
+    #rhpkg container-build --repo https://raw.githubusercontent.com/openshift/aos-cd-jobs/master/build-scripts/repo-conf/aos-signed-building.repo >> ${workingdir}/logs/${container}.buildlog 2>&1 &
+    #rhpkg container-build --repo https://raw.githubusercontent.com/openshift/aos-cd-jobs/master/build-scripts/repo-conf/aos-signed-latest.repo >> ${workingdir}/logs/${container}.buildlog 2>&1 &
     echo -n "  Waiting for build to start ."
     sleep 10
     taskid=`cat ${workingdir}/logs/${container}.buildlog | grep -i "Created task:" | head -n 1 | awk '{print $3}'`
@@ -570,17 +626,19 @@ update_dockerfile() {
   do
     if [ "${update_version}" == "TRUE" ] ; then
       sed -i -e "s/version=\".*\"/version=\"${version_version}\"/" ${line}
-      sed -i -e "s/FROM \(.*\):v.*/FROM \1:${version_version}/" ${line}
+      sed -i -e "s/FROM \(.*\):v.*/FROM \1:${version_version}-${release_version}/" ${line}
     fi
     if [ "${update_release}" == "TRUE" ] ; then
       sed -i -e "s/release=\".*\"/release=\"${release_version}\"/" ${line}
 
-      if [[ "${release_version}" == *"-"* ]]; then  # Does new release have a dash?
-        nr_start=$(echo ${release_version} | cut -d "-" -f 1)
-        # For any build using this method, we want a tag without the dash. This is
-        # what OCP will actually pull when it needs to pull an image associated with
-        # its current version.
-        echo "${nr_start}" > additional-tags
+      if [[ "${release_version}" == *"."* ]]; then  # Use newer dot notation?
+        nr_start=$(echo ${release_version} | rev | cut -d "." -f2- | rev)
+        # For any build using this method, we want a tag without the last field (e.g. "3.7.0-0.100.5" instead of
+        # "3.7.0-0.100.5.8"). The shorter tag is what OCP will actually use when it needs to pull an image
+        # associated with its current version. The last field in the release is used for refreshing images and
+        # is not necessary outside of pulp.
+        echo "${version_version}-${nr_start}" > additional-tags  # e.g. "v3.7.0-0.100.2" . This is the key tag OCP will use
+        echo "v${MAJOR_RELEASE}" >> additional-tags  # e.g. "v3.7" . For users/images where exact matches aren't critical
         git add additional-tags
       fi
 
@@ -588,17 +646,19 @@ update_dockerfile() {
     if [ "${bump_release}" == "TRUE" ] ; then
       # Example release line: release="2"
       old_release_version=$(grep release= ${line} | cut -d'=' -f2 | cut -d'"' -f2 )
-      if [[ "${old_release_version}" == *"-"* ]]; then  # Does release have a dash?
-        # The new build pipline initializes the Dockerfile to have release=REL#.INT#.STG#-0
-        # If the release=X.Y-Z, bump the Z
-        nr_start=$(echo ${old_release_version} | cut -d "-" -f 1)
-        nr_end=$(echo ${old_release_version} | cut -d "-" -f 2)
-        new_release="${nr_start}-$(($nr_end+1))"
+      if [[ "${old_release_version}" == *"."* ]]; then  # Use newer dot notation?
+        # The new build pipline initializes the Dockerfile to have release=REL.INT.STG.0
+        # If the release=X.Y.Z.B, bump the B
+        nr_start=$(echo ${old_release_version} | rev | cut -d "." -f2- | rev)
+        nr_end=$(echo ${old_release_version} | rev | cut -d . -f 1 | rev)
+        new_release="${nr_start}.$(($nr_end+1))"
 
-        # For any build using this method, we want a tag without the dash. This is
-        # what OCP will actually pull when it needs to pull an image associated with
-        # its current version.
-        echo "${nr_start}" > additional-tags
+        # For any build using this method, we want a tag without the last field (e.g. "3.7.0-0.100.5" instead of
+        # "3.7.0-0.100.5.8"). The shorter tag is what OCP will actually use when it needs to pull an image
+        # associated with its current version. The last field in the release is used for refreshing images and
+        # is not necessary outside of pulp.
+        echo "v${version_version}-${nr_start}" > additional-tags  # e.g. "v3.7.0-0.100.2" . This is the key tag OCP will use
+        echo "v${MAJOR_RELEASE}" >> additional-tags  # e.g. "v3.7" . For users/images where exact matches aren't critical
         git add additional-tags
       else
           let new_release_version=$old_release_version+1
@@ -647,6 +707,50 @@ merge_to_newest_dist_git() {
     echo " Pushing to dist-git ..."
     rhpkg commit -p -m "Update ose yum repo and/or additional-tags" >/dev/null 2>&1
   fi
+  popd >/dev/null
+}
+
+overwrite_dist_git_branch(){
+  pushd "${workingdir}/${container}" >/dev/null
+  echo "${branch}"
+  source_branch_files=$(mktemp -d)
+  rhpkg switch-branch "${branch}"
+  if [ "$?" -ne "0" ]; then
+    echo "Unable to switch to ${branch} branch."
+    exit 1
+  fi
+
+  cp -r ./ "${source_branch_files}"
+  ls -al "${source_branch_files}"
+  rhpkg switch-branch "${TARGET_DIST_GIT_BRANCH}"
+  if [ "$?" -ne "0" ]; then
+    echo "Unable to switch to ${TARGET_DIST_GIT_BRANCH} branch."
+    exit 1
+  fi
+  #remove everything except .git
+  find . -path ./.git -prune -o -exec rm -rf {} \; 2> /dev/null
+  rsync -av --exclude='.git' "${source_branch_files}/" ./
+  git add .
+  rhpkg commit -p -m "Overwriting with contents of ${branch} branch" >/dev/null 2>&1
+  popd >/dev/null
+}
+
+inject_files_to_dist_git() {
+  pushd "${workingdir}/${container}" >/dev/null
+  echo "${branch}"
+  rhpkg switch-branch "${branch}"
+  if [[ -f ${DIST_GIT_INJECT_PATH} ]]; then
+    cp "${DIST_GIT_INJECT_PATH}" ./
+  elif [[ -d ${DIST_GIT_INJECT_PATH} ]]; then
+    cp -r "${DIST_GIT_INJECT_PATH}/*" ./
+  else
+    echo "${DIST_GIT_INJECT_PATH} is not a valid file or directory!"
+    hard_exit
+  fi
+    #statements
+  ls -al ./
+  git add .
+  rhpkg commit -p -m "Adding ${DIST_GIT_INJECT_PATH} to root of branch" >/dev/null 2>&1
   popd >/dev/null
 }
 
@@ -1063,14 +1167,22 @@ start_push_image() {
     for current_tag in ${tag_list} ; do
       case ${current_tag} in
         default )
-          # Full name - <name>:<version>-<release>   (where version is something like "v3.6.140")
+          # Full name - <name>:<version>-<release>   (e.g. something like "v3.6.140-1" or "v3.7.0-0.100.4.0")
           push_image "${brew_image_url}" "${brew_image_sha}" "${image_path}" "${version_version}-${release_version}" | tee -a ${workingdir}/logs/push.image.log
           echo | tee -a ${workingdir}/logs/push.image.log
-          # Name and Version - <name>:<version>
-          if ! [ "${NOVERSIONONLY}" == "TRUE" ] ; then
-            push_image "${brew_image_url}" "${brew_image_sha}" "${image_path}" "${version_version}" | tee -a ${workingdir}/logs/push.image.log
+
+          # If using new dot notation, strip off last release field and push. See update_docker_file for details.
+          if [[ "${release_version}" == *"."* ]]; then  # Using newer dot notation?
+            nr_start=$(echo ${release_version} | rev | cut -d "." -f2- | rev)  # Strip off the last field of the release string
+            # Push with last release field stripped off since it is a "bump" field we use for refreshing images.
+            push_image "${brew_image_url}" "${brew_image_sha}" "${image_path}" "${version_version}-${nr_start}" | tee -a ${workingdir}/logs/push.image.log
+            echo | tee -a ${workingdir}/logs/push.image.log
           fi
-          # Latest - <name>:latest 
+
+          # Name and Version - <name>:<version>
+          push_image "${brew_image_url}" "${brew_image_sha}" "${image_path}" "${version_version}" | tee -a ${workingdir}/logs/push.image.log
+
+          # Latest - <name>:latest
           if ! [ "${NOTLATEST}" == "TRUE" ] ; then
             push_image "${brew_image_url}" "${brew_image_sha}" "${image_path}" "latest" | tee -a ${workingdir}/logs/push.image.log
           fi
@@ -1083,7 +1195,7 @@ start_push_image() {
         ;;
         all-v )
           if ! [ "${NOCHANNEL}" == "TRUE" ] ; then
-            version_trim_list="v3.1 v3.2 v3.3 v3.4 v3.5"
+            version_trim_list="v3.1 v3.2 v3.3 v3.4 v3.5 v3.6 v3.7 v3.8"
             for version_trim in ${version_trim_list} ; do
               echo "  TAG/PUSH: ${PUSH_REGISTRY}/${image_path}:${version_trim}" | tee -a ${workingdir}/logs/push.image.log
               docker tag ${PULL_REGISTRY}/${image_path}:${version_version}-${release_version} ${PUSH_REGISTRY}/${image_path}:${version_trim} | tee -a ${workingdir}/logs/push.image.log
@@ -1114,6 +1226,14 @@ start_push_image() {
   echo "FINISHED: ${container} START TIME: ${START_TIME}  STOP TIME: ${STOP_TIME}" | tee -a ${workingdir}/logs/push.image.log
   echo | tee -a ${workingdir}/logs/push.image.log
   popd >/dev/null
+}
+
+get_image_url() {
+  dockerfile=$1
+  name=$(grep " name=" "${dockerfile}" | cut -d'"' -f2)
+  version=$(grep version= "${dockerfile}" | cut -d'"' -f2)
+  release=$(grep release= "${dockerfile}" | cut -d'"' -f2)
+  echo "${PULL_REGISTRY}/${name}:${version}-${release}"
 }
 
 check_dependents() {
@@ -1211,6 +1331,72 @@ push_images() {
   popd >/dev/null
 }
 
+dist_git_copy() {
+  pushd "${workingdir}" >/dev/null
+  echo "Source Branch: ${branch}"
+  echo "Target Branch: ${TARGET_DIST_GIT_BRANCH}"
+  echo "Doing dist_git_copy: ${container}"
+  if [ -z "${TARGET_DIST_GIT_BRANCH}" ]; then
+      echo "Must provide --source_branch for dist_git_copy"
+      hard_exit
+  fi
+  setup_dist_git
+  overwrite_dist_git_branch
+  popd >/dev/null
+}
+
+dist_git_branch_check() {
+  pushd "${workingdir}" >/dev/null
+  setup_dist_git
+  pushd "${workingdir}/${container}" >/dev/null
+  rhpkg switch-branch "${branch}"
+  if [ "$?" -ne "0" ]; then
+    echo "${container}" >> "${workingdir}/missing_branch.log"
+  fi
+  popd >/dev/null
+  popd >/dev/null
+}
+
+dist_git_migrate() {
+  pushd "${workingdir}" >/dev/null
+  setup_dist_git
+  pushd "${workingdir}/${container}" >/dev/null
+  from_branch=$(echo "${branch}" | cut -d "-" -f2)
+  to_branch=$(echo "${TARGET_DIST_GIT_BRANCH}" | cut -d "-" -f2)
+  rhpkg switch-branch "${TARGET_DIST_GIT_BRANCH}"
+  if [ "$?" -ne "0" ]; then
+    echo "${container} has no ${TARGET_DIST_GIT_BRANCH} branch!"
+    exit 1
+  fi
+
+  # update repo enable
+  echo "Updating repo enable entries..."
+  sed -i -e "s/yum-config-manager\s*--enable\s*rhel-7-server-ose-${from_branch}-rpms/yum-config-manager --enable rhel-7-server-ose-${to_branch}-rpms/g" ./Dockerfile
+  cat ./Dockerfile
+  git diff --exit-code
+  if [ "$?" -ne "0" ]; then
+    echo "Changes have been made. Commiting back to dist-git."
+    rhpkg commit -p -m "Migrating from ${branch} to ${TARGET_DIST_GIT_BRANCH}"
+  fi
+
+  popd >/dev/null
+  popd >/dev/null
+}
+
+dist_git_inject() {
+  pushd "${workingdir}" >/dev/null
+  echo "Path to inject: ${DIST_GIT_INJECT_PATH}"
+  echo "Target Branch: ${branch}"
+  echo "Doing dist_git_inject: ${container}"
+  if [ -z "${DIST_GIT_INJECT_PATH}" ]; then
+      echo "Must provide --source_branch for dist_git_copy"
+      hard_exit
+  fi
+  setup_dist_git
+  inject_files_to_dist_git
+  popd >/dev/null
+}
+
 test_function() {
   echo -e "container: ${container}\tdocker names: ${dict_image_name[${container}]}"
   if [ "${VERBOSE}" == "TRUE" ] ; then
@@ -1227,7 +1413,7 @@ while [[ "$#" -ge 1 ]]
 do
 key="$1"
 case $key in
-    compare_git | git_compare | compare_nodocker | compare_auto | merge_to_newest | update_docker | docker_update | build_container | build | make_yaml | push_images | push | update_compare | update_errata | test)
+    compare_git | git_compare | compare_nodocker | compare_auto | merge_to_newest | update_docker | docker_update | build_container | build | make_yaml | push_images | push | update_compare | update_errata | test | dist_git_copy | dist_git_inject | dist_git_branch_check | dist_git_migrate | scan_images)
       export action="${key}"
       ;;
     list)
@@ -1265,6 +1451,17 @@ case $key in
     --branch)
       DIST_GIT_BRANCH="$2"
       export MAJOR_RELEASE=`echo ${DIST_GIT_BRANCH}| cut -d'-' -f2`
+      export MINOR_RELEASE=$(echo ${MAJOR_RELEASE} | cut -d'.' -f2)
+      export RELEASE_MAJOR=$(echo "$MAJOR_RELEASE" | cut -d . -f 1)
+      export RELEASE_MINOR=$(echo "$MAJOR_RELEASE" | cut -d . -f 2)
+      shift
+      ;;
+    --target_branch)
+      TARGET_DIST_GIT_BRANCH="$2"
+      shift
+      ;;
+    --inject_path)
+      DIST_GIT_INJECT_PATH="$2"
       shift
       ;;
     --repo)
@@ -1441,6 +1638,21 @@ else
   export parent=""
 fi
 
+
+# Openshift ansible CI triggers off a change to to the openshift3/ose image in registry.ops
+# to perform its testing. When it triggers, it expects there to be a "latest" puddle with
+# the exact version of OCP within the image available.
+# Directly after image pushing, we create this latest puddle. However, to minimize the time
+# between the image landing the the puddle being created, make sure ose is the *last*
+# image we push.
+if [ "$action" == "push_images" -o "$action" == "push" ]; then
+    if [[ "${packagelist}" == *"::openshift-enterprise-docker::"* ]]; then
+        # Remove ::openshift-enterprise-docker:: from the list and add it to the end
+        export packagelist="${packagelist//::openshift-enterprise-docker::} ::openshift-enterprise-docker::"
+    fi
+fi
+
+
 # Function to do the work for each item in the list
 do_work_each_package() {
 for unique_package in ${packagelist}
@@ -1567,8 +1779,35 @@ do
         echo "  Skipping ${container} - Image for building only"
       fi
     ;;
+    scan_images )
+      set -e
+      echo "=== ${container} ==="
+      if [ ! "${dict_image_name[${container}]}" ] ; then
+        echo "  Skipping ${container} - Image for building only"
+        continue
+      fi
+      setup_dockerfile
+      image=$(get_image_url "${workingdir}/${container}/Dockerfile")
+      if ! retry docker pull "${image}"; then
+        echo >&2 "OH NO!!! There was a problem pulling the image."
+        hard_exit
+      fi
+      echo "${image}" >> "${workingdir}/images_to_scan.txt"
+    ;;
     test | list )
       test_function
+    ;;
+    dist_git_copy )
+      dist_git_copy
+    ;;
+    dist_git_inject )
+      dist_git_inject
+    ;;
+    dist_git_branch_check )
+      dist_git_branch_check
+    ;;
+    dist_git_migrate )
+      dist_git_migrate
     ;;
     * )
       usage
@@ -1576,7 +1815,20 @@ do
     ;;
   esac
 done
+
+# Do post work for above Actions
+case "$action" in
+  dist_git_branch_check )
+    if [ -f "${workingdir}/missing_branch.log" ]; then
+      echo "dist-git repos missing branch ${branch}:"
+      cat "${workingdir}/missing_branch.log"
+    else
+      echo "No repos found missing branch ${branch}"
+    fi
+  ;;
+esac
 }
+
 
 # Do the work
 do_work_each_package
@@ -1633,9 +1885,15 @@ case "$action" in
     echo "Fail Pushes: ${BUILD_FAIL}"
     cat ${workingdir}/logs/buildfailed | cut -d':' -f3-4
   ;;
+  scan_images )
+    popd > /dev/null
+    sudo atomic scan --scanner openscap \
+      $(< "${workingdir}/images_to_scan.txt") \
+      > scan.txt
+  ;;
   compare_nodocker | compare_auto )
     if [ -s ${workingdir}/logs/mailfile ] ; then
-      mail -s "[${MAJOR_RELEASE}] Dockerfile merge diffs" tdawson@redhat.com,smunilla@redhat.com < ${workingdir}/logs/mailfile
+      mail -s "[${MAJOR_RELEASE}] Dockerfile merge diffs" smunilla@redhat.com < ${workingdir}/logs/mailfile
       echo "===== GIT COMPARE DOCKEFILE CHANGES ====="
       cat ${workingdir}/logs/mailfile
       # echo "Exiting ..."

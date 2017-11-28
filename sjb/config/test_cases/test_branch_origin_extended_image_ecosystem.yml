@@ -1,6 +1,7 @@
 ---
 parent: 'common/test_cases/origin_installed_release.yml'
 overrides:
+  junit_analysis: True
   timer: 'H H * * *'
   email:
     - bparees@redhat.com
@@ -8,6 +9,9 @@ overrides:
     - gmontero@redhat.com
     - cdaley@redhat.com
     - jminter@redhat.com
+    - miminar@redhat.com
+    - obulatov@redhat.com
+    - agladkov@redhat.com
 extensions:
   actions:
     - type: "script"

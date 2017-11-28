@@ -36,6 +36,21 @@ oct does not support non-openshift repository orgs.  openshift/sti-wildfly redir
           <defaultValue></defaultValue>
         </hudson.model.StringParameterDefinition>
         <hudson.model.StringParameterDefinition>
+          <name>BUILD_ID</name>
+          <description>The ID that prow sets on a Jenkins job in order to correlate it with a ProwJob.</description>
+          <defaultValue></defaultValue>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>REPO_OWNER</name>
+          <description>GitHub org that triggered the job.</description>
+          <defaultValue></defaultValue>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>REPO_NAME</name>
+          <description>GitHub repo that triggered the job.</description>
+          <defaultValue></defaultValue>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
           <name>STI_WILDFLY_PULL_ID</name>
           <description>The pull-request in the &lt;a href=&quot;https://github.com/openshift/sti-wildfly&quot;&gt;sti-wildfly&lt;/a&gt; repository to test.</description>
           <defaultValue></defaultValue>
@@ -161,6 +176,9 @@ ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel sudo chmod 
 ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel &#34;echo &#39;STI_WILDFLY_TARGET_BRANCH=${STI_WILDFLY_TARGET_BRANCH:-}&#39; &gt;&gt; /etc/environment&#34;
 ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel &#34;echo &#39;PULL_REFS=${PULL_REFS:-}&#39; &gt;&gt; /etc/environment&#34;
 ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel &#34;echo &#39;buildId=${buildId:-}&#39; &gt;&gt; /etc/environment&#34;
+ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel &#34;echo &#39;BUILD_ID=${BUILD_ID:-}&#39; &gt;&gt; /etc/environment&#34;
+ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel &#34;echo &#39;REPO_OWNER=${REPO_OWNER:-}&#39; &gt;&gt; /etc/environment&#34;
+ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel &#34;echo &#39;REPO_NAME=${REPO_NAME:-}&#39; &gt;&gt; /etc/environment&#34;
 ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel &#34;echo &#39;STI_WILDFLY_PULL_ID=${STI_WILDFLY_PULL_ID:-}&#39; &gt;&gt; /etc/environment&#34;
 ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel &#34;echo &#39;PULL_NUMBER=${PULL_NUMBER:-}&#39; &gt;&gt; /etc/environment&#34;
 ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel &#34;echo &#39;PULL_REFS=${PULL_REFS:-}&#39; &gt;&gt; /etc/environment&#34;
@@ -252,6 +270,9 @@ docker push docker.io/openshift/wildfly-100-centos7
 
 docker tag openshift/wildfly-101-centos7 docker.io/openshift/wildfly-101-centos7
 docker push docker.io/openshift/wildfly-101-centos7
+
+docker tag openshift/wildfly-110-centos7 docker.io/openshift/wildfly-110-centos7
+docker push docker.io/openshift/wildfly-110-centos7
 SCRIPT
 chmod +x &#34;${script}&#34;
 scp -F ./.config/origin-ci-tool/inventory/.ssh_config &#34;${script}&#34; openshiftdevel:&#34;${script}&#34;
@@ -333,11 +354,19 @@ fi
       </pluginFailureResultConstraint>
       <userMetadata/>
     </hudson.plugins.s3.S3BucketPublisher>
-    <hudson.tasks.Mailer plugin="mailer@1.16">
-      <recipients>bparees@redhat.com cewong@redhat.com gmontero@redhat.com cdaley@redhat.com jminter@redhat.com</recipients>
-      <dontNotifyEveryUnstableBuild>true</dontNotifyEveryUnstableBuild>
-      <sendToIndividuals>false</sendToIndividuals>
-    </hudson.tasks.Mailer>
+    <hudson.plugins.ws__cleanup.WsCleanup plugin="ws-cleanup@0.34">
+      <patterns class="empty-list"/>
+      <deleteDirs>false</deleteDirs>
+      <skipWhenFailed>false</skipWhenFailed>
+      <cleanWhenSuccess>true</cleanWhenSuccess>
+      <cleanWhenUnstable>true</cleanWhenUnstable>
+      <cleanWhenFailure>true</cleanWhenFailure>
+      <cleanWhenNotBuilt>true</cleanWhenNotBuilt>
+      <cleanWhenAborted>true</cleanWhenAborted>
+      <notFailBuild>false</notFailBuild>
+      <cleanupMatrixParent>false</cleanupMatrixParent>
+      <externalDelete></externalDelete>
+    </hudson.plugins.ws__cleanup.WsCleanup>
   </publishers>
   <buildWrappers>
     <hudson.plugins.ws__cleanup.PreBuildCleanup plugin="ws-cleanup@0.32">
@@ -345,9 +374,6 @@ fi
       <cleanupParameter></cleanupParameter>
       <externalDelete></externalDelete>
     </hudson.plugins.ws__cleanup.PreBuildCleanup>
-    <hudson.plugins.ansicolor.AnsiColorBuildWrapper plugin="ansicolor@0.4.2">
-      <colorMapName>xterm</colorMapName>
-    </hudson.plugins.ansicolor.AnsiColorBuildWrapper>
   </buildWrappers>
   <pollSubjobs>false</pollSubjobs>
 </com.tikal.jenkins.plugins.multijob.MultiJobProject>

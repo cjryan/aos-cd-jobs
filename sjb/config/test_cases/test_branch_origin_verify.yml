@@ -1,5 +1,9 @@
 ---
 parent: 'common/test_cases/origin.yml'
+overrides:
+  junit_analysis: False
+  email:
+    - deads@redhat.com
 extensions:
   actions:
     - type: "script"

@@ -19,18 +19,43 @@
     <hudson.model.ParametersDefinitionProperty>
       <parameterDefinitions>
         <hudson.model.StringParameterDefinition>
-          <name>OPENSHIFT_ANSIBLE_TARGET_BRANCH</name>
-          <description>The branch in the &lt;a href=&#34;https://github.com/openshift/openshift-ansible&#34;&gt;openshift-ansible&lt;/a&gt; repository to test against.</description>
-          <defaultValue>master</defaultValue>
-        </hudson.model.StringParameterDefinition>
-        <hudson.model.StringParameterDefinition>
-          <name>PULL_REFS</name>
-          <description>Used by prow. If this is not a pull request, it should at least contain the branch:hash of the HEAD being tested.</description>
+          <name>buildId</name>
+          <description>Unique build number for each run.</description>
           <defaultValue></defaultValue>
         </hudson.model.StringParameterDefinition>
         <hudson.model.StringParameterDefinition>
-          <name>buildId</name>
-          <description>The ID that prow sets on a Jenkins job in order to correlate it with a ProwJob.</description>
+          <name>REPO_OWNER</name>
+          <description>GitHub org that triggered the job.</description>
+          <defaultValue>openshift</defaultValue>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>REPO_NAME</name>
+          <description>GitHub repo that triggered the job.</description>
+          <defaultValue>origin</defaultValue>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>PULL_BASE_REF</name>
+          <description>Ref name of the base branch.</description>
+          <defaultValue></defaultValue>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>PULL_BASE_SHA</name>
+          <description>Git SHA of the base branch.</description>
+          <defaultValue></defaultValue>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>PULL_REFS</name>
+          <description>All refs to test.</description>
+          <defaultValue></defaultValue>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>PULL_NUMBER</name>
+          <description>Pull request number.</description>
+          <defaultValue></defaultValue>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>PULL_PULL_SHA</name>
+          <description>Pull request head SHA.</description>
           <defaultValue></defaultValue>
         </hudson.model.StringParameterDefinition>
         <hudson.model.StringParameterDefinition>
@@ -39,14 +64,24 @@
           <defaultValue>master</defaultValue>
         </hudson.model.StringParameterDefinition>
         <hudson.model.StringParameterDefinition>
+          <name>BUILD_ID</name>
+          <description>The ID that prow sets on a Jenkins job in order to correlate it with a ProwJob.</description>
+          <defaultValue></defaultValue>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
           <name>ORIGIN_AGGREGATED_LOGGING_PULL_ID</name>
           <description>The pull-request in the &lt;a href=&#34;https://github.com/openshift/origin-aggregated-logging&#34;&gt;origin-aggregated-logging&lt;/a&gt; repository to test.</description>
           <defaultValue></defaultValue>
         </hudson.model.StringParameterDefinition>
         <hudson.model.StringParameterDefinition>
-          <name>PULL_NUMBER</name>
-          <description>The pull-request in the &lt;a href=&#34;https://github.com/openshift/origin-aggregated-logging&#34;&gt;origin-aggregated-logging&lt;/a&gt; repository to test. This is compatible with prow.</description>
-          <defaultValue></defaultValue>
+          <name>OPENSHIFT_ANSIBLE_TARGET_BRANCH</name>
+          <description>The branch in the &lt;a href=&#34;https://github.com/openshift/openshift-ansible&#34;&gt;openshift-ansible&lt;/a&gt; repository to test against.</description>
+          <defaultValue>master</defaultValue>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>AOS_CD_JOBS_TARGET_BRANCH</name>
+          <description>The branch in the &lt;a href=&#34;https://github.com/openshift/aos-cd-jobs&#34;&gt;aos-cd-jobs&lt;/a&gt; repository to test against.</description>
+          <defaultValue>master</defaultValue>
         </hudson.model.StringParameterDefinition>
         <hudson.model.StringParameterDefinition>
           <name>MERGE_SEVERITY</name>
@@ -99,6 +134,22 @@ approve.sh origin-aggregated-logging &quot;${ORIGIN_AGGREGATED_LOGGING_TARGET_BR
           <buildOnlyIfSCMChanges>false</buildOnlyIfSCMChanges>
           <applyConditionOnlyIfNoSCMChanges>false</applyConditionOnlyIfNoSCMChanges>
         </com.tikal.jenkins.plugins.multijob.PhaseJobsConfig>
+        <com.tikal.jenkins.plugins.multijob.PhaseJobsConfig>
+          <jobName>test_pull_request_origin_aggregated_logging_ansible_json_file</jobName>
+          <currParams>true</currParams>
+          <exposedSCM>false</exposedSCM>
+          <disableJob>false</disableJob>
+          <parsingRulesPath></parsingRulesPath>
+          <maxRetries>0</maxRetries>
+          <enableRetryStrategy>false</enableRetryStrategy>
+          <enableCondition>false</enableCondition>
+          <abortAllJob>false</abortAllJob>
+          <condition></condition>
+          <configs class="empty-list"/>
+          <killPhaseOnJobResultCondition>NEVER</killPhaseOnJobResultCondition>
+          <buildOnlyIfSCMChanges>false</buildOnlyIfSCMChanges>
+          <applyConditionOnlyIfNoSCMChanges>false</applyConditionOnlyIfNoSCMChanges>
+        </com.tikal.jenkins.plugins.multijob.PhaseJobsConfig>
       </phaseJobs>
       <continuationCondition>ALWAYS</continuationCondition>
     </com.tikal.jenkins.plugins.multijob.MultiJobBuilder>
@@ -113,9 +164,21 @@ approve.sh origin-aggregated-logging &quot;${ORIGIN_AGGREGATED_LOGGING_TARGET_BR
       <optional>true</optional>
       <doNotFingerprintArtifacts>true</doNotFingerprintArtifacts>
     </hudson.plugins.copyartifact.CopyArtifact>
+    <hudson.plugins.copyartifact.CopyArtifact plugin="copyartifact@1.38">
+      <project>test_pull_request_origin_aggregated_logging_ansible_json_file</project>
+      <filter>**</filter>
+      <target>test_pull_request_origin_aggregated_logging_ansible_json_file/</target>
+      <excludes></excludes>
+      <selector class="hudson.plugins.copyartifact.SpecificBuildSelector">
+        <buildNumber>${TEST_PULL_REQUEST_ORIGIN_AGGREGATED_LOGGING_ANSIBLE_JSON_FILE_BUILD_NUMBER}</buildNumber>
+      </selector>
+      <optional>true</optional>
+      <doNotFingerprintArtifacts>true</doNotFingerprintArtifacts>
+    </hudson.plugins.copyartifact.CopyArtifact>
     <hudson.tasks.Shell>
       <command># record the log from the downstream job here for FCM parsing
 cat /var/lib/jenkins/jobs/test_pull_request_origin_aggregated_logging_ansible/builds/${TEST_PULL_REQUEST_ORIGIN_AGGREGATED_LOGGING_ANSIBLE_BUILD_NUMBER}/log
+cat /var/lib/jenkins/jobs/test_pull_request_origin_aggregated_logging_ansible_json_file/builds/${TEST_PULL_REQUEST_ORIGIN_AGGREGATED_LOGGING_ANSIBLE_JSON_FILE_BUILD_NUMBER}/log
       </command>
     </hudson.tasks.Shell>
   </builders>
@@ -182,6 +245,19 @@ fi
       </pluginFailureResultConstraint>
       <userMetadata/>
     </hudson.plugins.s3.S3BucketPublisher>
+    <hudson.plugins.ws__cleanup.WsCleanup plugin="ws-cleanup@0.34">
+      <patterns class="empty-list"/>
+      <deleteDirs>false</deleteDirs>
+      <skipWhenFailed>false</skipWhenFailed>
+      <cleanWhenSuccess>true</cleanWhenSuccess>
+      <cleanWhenUnstable>true</cleanWhenUnstable>
+      <cleanWhenFailure>true</cleanWhenFailure>
+      <cleanWhenNotBuilt>true</cleanWhenNotBuilt>
+      <cleanWhenAborted>true</cleanWhenAborted>
+      <notFailBuild>false</notFailBuild>
+      <cleanupMatrixParent>false</cleanupMatrixParent>
+      <externalDelete></externalDelete>
+    </hudson.plugins.ws__cleanup.WsCleanup>
   </publishers>
   <buildWrappers>
     <hudson.plugins.ws__cleanup.PreBuildCleanup plugin="ws-cleanup@0.32">
@@ -189,9 +265,6 @@ fi
       <cleanupParameter></cleanupParameter>
       <externalDelete></externalDelete>
     </hudson.plugins.ws__cleanup.PreBuildCleanup>
-    <hudson.plugins.ansicolor.AnsiColorBuildWrapper plugin="ansicolor@0.4.2">
-      <colorMapName>xterm</colorMapName>
-    </hudson.plugins.ansicolor.AnsiColorBuildWrapper>
   </buildWrappers>
   <pollSubjobs>false</pollSubjobs>
 </com.tikal.jenkins.plugins.multijob.MultiJobProject>

@@ -1,0 +1,12 @@
+---
+parent: 'common/test_cases/origin.yml'
+overrides:
+  sync_repos:
+    - name: "image-registry"
+extensions:
+  actions:
+    - type: "script"
+      title: "run image-registry integration tests"
+      repository: "image-registry"
+      script: |-
+        OS_BUILD_ENV_TMP_VOLUME='/tmp' hack/env JUNIT_REPORT='true' make test-integration

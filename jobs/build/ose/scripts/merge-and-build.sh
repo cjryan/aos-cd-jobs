@@ -45,7 +45,9 @@ echo
 echo "=========="
 echo "Making sure we have kerberos"
 echo "=========="
-kinit -k -t /home/jenkins/ocp-build.keytab ocp-build/atomic-e2e-jenkins.rhev-ci-vms.eng.rdu2.redhat.com@REDHAT.COM
+# Old keytab for original OS1 build machine
+# kinit -k -t /home/jenkins/ocp-build.keytab ocp-build/atomic-e2e-jenkins.rhev-ci-vms.eng.rdu2.redhat.com@REDHAT.COM
+kinit -k -t /home/jenkins/ocp-build-buildvm.openshift.eng.bos.redhat.com.keytab ocp-build/buildvm.openshift.eng.bos.redhat.com@REDHAT.COM
 
 # Path for merge-and-build script
 MB_PATH=$(readlink -f $0)
@@ -117,6 +119,20 @@ fi
 
 echo
 echo "=========="
+echo "Setup OIT stuff"
+echo "=========="
+
+
+pushd ${BUILDPATH}
+OIT_DIR="${BUILDPATH}/enterprise-images/"
+rm -rf ${OIT_DIR}
+mkdir -p ${OIT_DIR}
+OIT_PATH="${OIT_DIR}/oit/oit.py"
+git clone git@github.com:openshift/enterprise-images.git ${OIT_DIR}
+popd
+
+echo
+echo "=========="
 echo "Setup origin-web-console stuff"
 echo "=========="
 cd ${WORKPATH}
@@ -157,6 +173,8 @@ cd ${WORKPATH}
 rm -rf ose
 git clone git@github.com:openshift/ose.git
 cd ose
+
+OSE_DIR="${WORKPATH}/ose/"
 
 # Enable fake merge driver used in our .gitattributes
 # https://github.com/openshift/ose/commit/02b57ed38d94ba1d28b9bc8bd8abcb6590013b7c
@@ -217,7 +235,7 @@ fi
 
 VOUT="$(get_version_fields $SPEC_VERSION_COUNT)"
 if [ "$?" != "0" ]; then
-  echo "Error determining version fields: $VOUT"  
+  echo "Error determining version fields: $VOUT"
   exit 1
 fi
 
@@ -260,19 +278,36 @@ echo
 echo -n "https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=${TASK_NUMBER}" > "${RESULTS}/ose-brew.url"
 brew watch-task ${TASK_NUMBER}
 
+echo
+echo "=========="
+echo "Setup: openshift-jenkins"
+echo "=========="
+pushd ${WORKPATH}
+rm -rf jenkins
+git clone git@github.com:openshift/jenkins.git
+OPENSHIFT_JENKINS_DIR="${WORKPATH}/jenkins/"
+cd jenkins/
+if [ "${OSE_VERSION}" != "${OSE_MASTER}" ] ; then
+  if [ "${MAJOR}" -eq 3 ] && [ "${MINOR}" -ge 6 ] ; then # 3.5 and below maps to "release-1.5"
+    git checkout -q openshift-${MAJOR}.${MINOR}
+  fi
+fi
+popd
 
 echo
 echo "=========="
 echo "Setup: openshift-ansible"
 echo "=========="
+pushd ${WORKPATH}
 rm -rf openshift-ansible
 git clone git@github.com:openshift/openshift-ansible.git
+OPENSHIFT_ANSIBLE_DIR="${WORKPATH}/openshift-ansible/"
 cd openshift-ansible/
 if [ "${BUILD_MODE}" == "online:stg" ] ; then
     git checkout -q stage
 else
   if [ "${OSE_VERSION}" != "${OSE_MASTER}" ] ; then
-    if [ "${MAJOR}" -eq 3 -a "${MINOR}" -le 5 ] ; then # 3.5 and below maps to "release-1.5"
+    if [ "${MAJOR}" -eq 3 ] && [ "${MINOR}" -le 5 ] ; then # 3.5 and below maps to "release-1.5"
       git checkout -q release-1.${MINOR}
     else  # Afterwards, version maps directly; 3.5 => "release-3.5"
       git checkout -q release-${OSE_VERSION}
@@ -306,25 +341,27 @@ echo "TASK URL: https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=${TA
 echo
 echo -n "https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=${TASK_NUMBER}" > "${RESULTS}/openshift-ansible-brew.url"
 brew watch-task ${TASK_NUMBER}
+popd
 
 echo
 echo "=========="
 echo "Signing RPMs"
 echo "=========="
-"${WORKSPACE}/build-scripts/sign_rpms.sh" "rhaos-${OSE_VERSION}-rhel-7" "openshifthosted"
+# "${WORKSPACE}/build-scripts/sign_rpms.sh" "rhaos-${OSE_VERSION}-rhel-7-candidate" "openshifthosted"
 
 pushd "${WORKSPACE}"
 COMMIT_SHA="$(git rev-parse HEAD)"
 popd
 PUDDLE_CONF_BASE="https://raw.githubusercontent.com/openshift/aos-cd-jobs/${COMMIT_SHA}/build-scripts/puddle-conf"
 PUDDLE_CONF="${PUDDLE_CONF_BASE}/atomic_openshift-${OSE_VERSION}.conf"
+PUDDLE_SIG_KEY="b906ba72"
 
 echo
 echo "=========="
 echo "Building Puddle"
 echo "=========="
 ssh ocp-build@rcm-guest.app.eng.bos.redhat.com \
-    sh -s "${PUDDLE_CONF}" -b -d -n -s --label=building \
+    sh -s -- --conf "${PUDDLE_CONF}" -b -d -n -s --label=building \
     < "${WORKSPACE}/build-scripts/rcm-guest/call_puddle.sh"
 
 
@@ -336,7 +373,24 @@ ose_images.sh --user ocp-build compare_nodocker --branch rhaos-${OSE_VERSION}-rh
 
 echo
 echo "=========="
-echo "Update Dockerfiles to new version"
+echo "Run OIT rebase"
+echo "=========="
+
+cat >"${OIT_WORKING}/sources.yml" <<EOF
+ose: ${OSE_DIR}
+jenkins: ${OPENSHIFT_JENKINS_DIR}
+openshift-ansible: ${OPENSHIFT_ANSIBLE_DIR}
+EOF
+
+${OIT_PATH} --user=ocp-build --metadata-dir ${OIT_DIR} --working-dir ${OIT_WORKING} --group openshift-${OSE_VERSION} \
+distgits:rebase --sources ${OIT_WORKING}/sources.yml --version v${VERSION} \
+--release 1 \
+--message "Updating Dockerfile version and release v${VERSION}-1" --push
+
+
+echo
+echo "=========="
+echo "Update Dockerfiles to new version"``
 echo "=========="
 ose_images.sh --user ocp-build update_docker --branch rhaos-${OSE_VERSION}-rhel-7 --group base --force --release 1 --version "v${VERSION}"
 
@@ -344,13 +398,22 @@ echo
 echo "=========="
 echo "Build Images"
 echo "=========="
-ose_images.sh --user ocp-build build_container --branch rhaos-${OSE_VERSION}-rhel-7 --group base --repo http://download.lab.bos.redhat.com/rcm-guest/puddles/RHAOS/repos/aos-unsigned-building.repo
+ose_images.sh --user ocp-build build_container --branch rhaos-${OSE_VERSION}-rhel-7 --group base --repo https://raw.githubusercontent.com/openshift/aos-cd-jobs/master/build-scripts/repo-conf/aos-unsigned-building.repo
+
+echo
+echo "=========="
+echo "Build OIT images"
+echo "=========="
+
+${OIT_PATH} --user=ocp-build --metadata-dir ${OIT_DIR} --working-dir ${OIT_WORKING} --group openshift-${OSE_VERSION} \
+distgits:build-image \
+--push-to-defaults --repo-type unsigned
 
 if [ "$EARLY_LATEST_HACK" == "true" ]; then
     # Hack to keep from breaking openshift-ansible CI during daylight builds. They need the latest puddle to exist
     # before images are pushed to registry-ops in order for their current CI implementation to work.
     ssh ocp-build@rcm-guest.app.eng.bos.redhat.com \
-        sh -s "${PUDDLE_CONF}" -b -d -n \
+        sh -s -- --conf "${PUDDLE_CONF}" -b -d -n \
         < "${WORKSPACE}/build-scripts/rcm-guest/call_puddle.sh"
 fi
 
@@ -361,24 +424,18 @@ echo "=========="
 # Pass PATH to ensure that sudo inherits Jenkins setup of PATH environment variable.
 sudo env "PATH=$PATH" ose_images.sh --user ocp-build push_images ${PUSH_EXTRA} --branch rhaos-${OSE_VERSION}-rhel-7 --group base
 
-set +e
-# Try pushing to new registry, but don't error for now.
-sudo env "PATH=$PATH" ose_images.sh --user ocp-build push_images ${PUSH_EXTRA} --branch rhaos-${OSE_VERSION}-rhel-7 --group base --push_reg registry.reg-aws.openshift.com:443/online
-set -e
-
 echo
 echo "=========="
 echo "Create latest puddle"
 echo "=========="
 if [ "$EARLY_LATEST_HACK" != "true" ]; then
     ssh ocp-build@rcm-guest.app.eng.bos.redhat.com \
-        sh -s "${PUDDLE_CONF}" -b -d -n \
+        sh -s -- --conf "${PUDDLE_CONF}" -b -d -n \
         < "${WORKSPACE}/build-scripts/rcm-guest/call_puddle.sh"
 fi
 
 # Record the name of the puddle which was created
 PUDDLE_NAME=$(ssh ocp-build@rcm-guest.app.eng.bos.redhat.com readlink "/mnt/rcm-guest/puddles/RHAOS/AtomicOpenShift/${OSE_VERSION}/latest")
-echo -n "${PUDDLE_NAME}" > "${RESULTS}/ose-puddle.name"
 echo "Created puddle on rcm-guest: /mnt/rcm-guest/puddles/RHAOS/AtomicOpenShift/${OSE_VERSION}/${PUDDLE_NAME}"
 
 echo
@@ -395,9 +452,12 @@ enterprise:pre-release ) PUDDLE_REPO="" ;;
 esac
 
 ssh ocp-build@rcm-guest.app.eng.bos.redhat.com \
-  sh -s "simple" "${OSE_VERSION}" "${PUDDLE_REPO}" \
+  sh -s "simple" "${VERSION}" "${PUDDLE_REPO}" \
   < "${WORKSPACE}/build-scripts/rcm-guest/push-to-mirrors.sh"
 
+# push-to-mirrors.sh creates a symlink on rcm-guest with this new name and makes the
+# directory on the mirrors match this name.
+echo -n "${PUDDLE_NAME}_v${VERSION}" > "${RESULTS}/ose-puddle.name"
 
 echo
 echo "=========="

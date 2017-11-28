@@ -55,8 +55,9 @@ echo "GOPATH: ${GOPATH}"
 echo "BUILDPATH: ${BUILDPATH}"
 echo "WORKPATH ${WORKPATH}"
 
-# Kerberos credeneitslf of ocp-build
-kinit -k -t /home/jenkins/ocp-build.keytab ocp-build/atomic-e2e-jenkins.rhev-ci-vms.eng.rdu2.redhat.com@REDHAT.COM
+# Old OS1 buildvm keytab
+#kinit -k -t /home/jenkins/ocp-build.keytab ocp-build/atomic-e2e-jenkins.rhev-ci-vms.eng.rdu2.redhat.com@REDHAT.COM
+kinit -k -t /home/jenkins/ocp-build-buildvm.openshift.eng.bos.redhat.com.keytab ocp-build/buildvm.openshift.eng.bos.redhat.com@REDHAT.COM
 
 # This variable set by the Jenkins pipeline.
 if [ -z "$RELEASE_VERSION" ]; then
@@ -110,7 +111,7 @@ else
     echo "=========="
     tito tag --accept-auto-changelog "${TITO_USE_VERSION}"
     export VERSION="$(grep Version: openshift-scripts.spec | awk '{print $2}')"
-    
+
     git push
     git push --tags
 
@@ -124,29 +125,36 @@ else
     echo
     brew watch-task ${TASK_NUMBER}
 
+    # The build target tags things as libra-rhel-7-test. We need to tag as -candidate
+    # for the rest of out logic to work.
+    TAG=`git describe --abbrev=0`
+    COMMIT=`git log -n 1 --pretty=%h`
+    brew tag-pkg libra-rhel-7-candidate ${TAG}.git.0.${COMMIT}.el7
+
     # tag-pkg seems to work async even though we are not specifying the --nowait argument.
     # We have seen the push which follows push the old build instead of the new, so
     # using a sleep below to allow brew to get into a consistent state.
     sleep 20
-    
+
     echo
     echo "=========="
     echo "Signing RPMs"
     echo "=========="
-    "${WORKSPACE}/build-scripts/sign_rpms.sh" "libra-rhel-7" "openshifthosted"
-    
+    "${WORKSPACE}/build-scripts/sign_rpms.sh" "libra-rhel-7-candidate" "openshifthosted"
+
     pushd "${WORKSPACE}"
     COMMIT_SHA="$(git rev-parse HEAD)"
     popd
     PUDDLE_CONF_BASE="https://raw.githubusercontent.com/openshift/aos-cd-jobs/${COMMIT_SHA}/build-scripts/puddle-conf"
-    PUDDLE_CONF="${PUDDLE_CONF_BASE}/atomic_openshift_online-${MAJOR_MINOR_VERSION}_signed.conf"
-    
+    PUDDLE_CONF="${PUDDLE_CONF_BASE}/atomic_openshift_online-${MAJOR_MINOR_VERSION}.conf"
+    PUDDLE_SIG_KEY="b906ba72"
+
     echo
     echo "=========="
     echo "Building Puddle"
     echo "=========="
     ssh ocp-build@rcm-guest.app.eng.bos.redhat.com \
-        sh -s "${PUDDLE_CONF}" -b -d -n -s --label=building \
+        sh -s -- --conf "${PUDDLE_CONF}" --keys "${PUDDLE_SIG_KEY}" -b -d -n -s --label=building \
         < "${WORKSPACE}/build-scripts/rcm-guest/call_puddle.sh"
 
     echo
@@ -171,17 +179,14 @@ else
     echo "=========="
     echo "Push Images"
     echo "=========="
-    # Push to legacy registry
+    # Push to registry
     sudo env "PATH=$PATH" ose_images.sh --user ocp-build push_images --branch libra-rhel-7 --group oso --release 1
-    # Push to new registry
-    sudo env "PATH=$PATH" ose_images.sh --user ocp-build push_images --branch libra-rhel-7 --group oso --push_reg registry.reg-aws.openshift.com:443/online
-
     echo
     echo "=========="
     echo "Create latest puddle"
     echo "=========="
     ssh ocp-build@rcm-guest.app.eng.bos.redhat.com \
-        sh -s "${PUDDLE_CONF}" -b -d -n \
+        sh -s -- --conf "${PUDDLE_CONF}" --keys "${PUDDLE_SIG_KEY}" -b -d -n \
         < "${WORKSPACE}/build-scripts/rcm-guest/call_puddle.sh"
 
     echo
@@ -189,7 +194,7 @@ else
     echo "Build and Push repos"
     echo "=========="
     ssh ocp-build@rcm-guest.app.eng.bos.redhat.com \
-      sh -s "${MAJOR_MINOR_VERSION}" "${BUILD_MODE}" \
+      sh -s "${VERSION}" "${BUILD_MODE}" \
       < "${WORKSPACE}/build-scripts/rcm-guest/push-openshift-online-to-mirrors.sh"
 
 fi

@@ -5,7 +5,7 @@ GIT_ROOT="/home/opsmedic/aos-cd/git"
 TMPDIR="$HOME/aos-cd/tmp"
 mkdir -p "${TMPDIR}"
 
-VALID_ARGUMENTS=(docker_version openshift_ansible_build)
+VALID_ARGUMENTS=(cicd_docker_version cicd_openshift_ansible_build cicd_openshift_version)
 
 # TMPTMP is a directory specific to each invocation. It will be
 # deleted when the script terminates.
@@ -45,12 +45,12 @@ function parse_and_set_vars() {
     exit 1
   fi
 
-  echo "Setting cicd-control environment variable: $1" >&2
-  export $1
-  #value=$(echo $1 | awk -F= '{print $2}')
+  value=$(echo $1 | awk -F= '{print $2}')
+  if [ ! -z ${value} ]; then
+    echo "Setting cicd-control environment variable: $1" >&2
+    export $1
+  fi
 
-  #eval $var=\$value
-  #export $var
 }
 
 function print_usage() {
@@ -60,11 +60,12 @@ function print_usage() {
   echo "  -h               display this help and exit"
   echo "  -c CLUSTERNAME   specify the CLUSTERNAME to perform the upgrade on"
   echo "  -o OPERATION     specify the upgrade OPERATION to perform"
-  echo "  -a ARG           specify the ARG"
+  echo "  -e ARG           specify the extra ARG; this is the form key=value"
+  echo "  -d DEPLOYMENT    specify the cluster deployment type: dedicated|online  Default: online"
   echo
   echo "Examples:"
   echo
-  echo "    $(basename $0) -c prod-cluster -o upgrade < -a argument >"
+  echo "    $(basename $0) -c prod-cluster -o upgrade < -e argument >"
   echo
 
 }
@@ -77,8 +78,9 @@ cd $START_DIR
 
 unset CLUSTERNAME
 unset OPERATION
+unset DEPLOYMENT
 
-while getopts hc:i:o:a: opt; do
+while getopts hc:i:o:e:d: opt; do
     case $opt in
         h)
             print_usage
@@ -90,8 +92,11 @@ while getopts hc:i:o:a: opt; do
         o)
             export OPERATION=$OPTARG
             ;;
-        a)
+        e)
             parse_and_set_vars $OPTARG
+            ;;
+        d)
+            export DEPLOYMENT=$OPTARG
             ;;
         *)
             print_usage
@@ -114,9 +119,14 @@ if [ -z "${OPERATION+x}" ]; then
   exit 1
 fi
 
+if [ -z "${DEPLOYMENT+x}" ]; then
+  export DEPLOYMENT=online
+fi
+
 echo "Running $(basename $0) on:" >&2
 echo "CLUSTER: ${CLUSTERNAME}" >&2
 echo "OPERATION: ${OPERATION}" >&2
+echo "DEPLOYMENT: ${DEPLOYMENT}" >&2
 echo >&2
 
 function is_running(){
@@ -143,6 +153,12 @@ function update_ops_git_repos () {
   set -e
 }
 
+function update-online-roles() {
+  /usr/bin/ssh-agent bash -c 'ssh-add /home/opsmedic/aos-cd/git/openshift-ansible-private/private_roles/aos-cicd/files/github_ops_bot_ssh_key.rsa; /usr/bin/gogitit sync -m ./gogitit_online.yml'
+
+  export OPENSHIFT_ONLINE_ROLES=/home/opsmedic/aos-cd/vendored/gogitit-online/roles
+}
+
 function get_latest_openshift_ansible()  {
   AOS_TMPDIR="${TMPTMP}/openshift-ansible_extract"
   mkdir -p "${AOS_TMPDIR}"
@@ -158,7 +174,7 @@ function get_master_name() {
 # Outputs the name of one a master for a cluster
 
   # Find an appropriate master
-  MASTER="$(ossh --list | grep ${CLUSTERNAME}-master | head -n 1 | cut -d " " -f 1)"
+  MASTER="$(ossh --list | grep -E \^${CLUSTERNAME}-master | head -n 1 | cut -d " " -f 1)"
 
   if [[ "${MASTER}" != "${CLUSTERNAME}"-* ]]; then
       echo "Unable to find master for the specified cluster"
@@ -176,29 +192,69 @@ function pre-check() {
   # Set some cluster vars
   setup_cluster_vars
 
-  # Get the version of RPMS that will be used
-  AOS_TMPDIR="${TMPTMP}/openshift-ansible_extract"
-  mkdir -p "${AOS_TMPDIR}"
+  # ONLINE PRE CHECK
+  if [ "${DEPLOYMENT}" == "online" ]; then
+    # Get the version of RPMS that will be used
+    AOS_TMPDIR="${TMPTMP}/openshift-ansible_extract"
+    mkdir -p "${AOS_TMPDIR}"
 
-  # get the latest openshift-ansible rpms
-  pushd "$GIT_ROOT/openshift-ansible-ops/playbooks/adhoc/get_openshift_ansible_rpms" > /dev/null
-    /usr/bin/ansible-playbook get_openshift_ansible_rpms.yml -e cli_type=online -e cli_release=${oo_environment} -e cli_download_dir=${AOS_TMPDIR} &> /dev/null
-  popd > /dev/null
-  OS_RPM_VERSION=$(rpm -qp --queryformat "%{VERSION}\n" ${AOS_TMPDIR}/rpms/*rpm | sort | uniq )
+    # get the latest openshift-ansible rpms
+    pushd "$GIT_ROOT/openshift-ansible-ops/playbooks/adhoc/get_openshift_ansible_rpms" > /dev/null
+      /usr/bin/ansible-playbook get_openshift_ansible_rpms.yml -e cli_type=online -e cli_release=${oo_environment} -e cli_download_dir=${AOS_TMPDIR} &> /dev/null
+    popd > /dev/null
+    OS_RPM_VERSION=$(rpm -qp --queryformat "%{VERSION}-%{RELEASE}\n" ${AOS_TMPDIR}/rpms/*rpm | sort | uniq )
 
+    MASTER="$(get_master_name)"
+    /usr/local/bin/autokeys_loader ossh -l root "${MASTER}" -c "/usr/bin/yum clean all" > /dev/null
+    /usr/local/bin/autokeys_loader ossh -l root "${MASTER}" -c "/usr/sbin/atomic-openshift-excluder unexclude" > /dev/null
+    OPENSHIFT_VERSION=$(/usr/local/bin/autokeys_loader ossh -l root "${MASTER}" -c "/usr/bin/repoquery --quiet --pkgnarrow=repos --queryformat='%{version}-%{release}' atomic-openshift")
+    /usr/local/bin/autokeys_loader ossh -l root "${MASTER}" -c "/usr/sbin/atomic-openshift-excluder exclude" > /dev/null
 
-  MASTER="$(get_master_name)"
-  /usr/local/bin/autokeys_loader ossh -l root "${MASTER}" -c "/usr/bin/yum clean all" > /dev/null
-  /usr/local/bin/autokeys_loader ossh -l root "${MASTER}" -c "/usr/sbin/atomic-openshift-excluder unexclude" > /dev/null
-  OPENSHIFT_VERSION=$(/usr/local/bin/autokeys_loader ossh -l root "${MASTER}" -c "/usr/bin/repoquery --quiet --pkgnarrow=repos --queryformat='%{version}-%{release}' atomic-openshift")
-  /usr/local/bin/autokeys_loader ossh -l root "${MASTER}" -c "/usr/sbin/atomic-openshift-excluder exclude" > /dev/null
+    echo
+    echo Openshift Ansible RPM Version: ${OS_RPM_VERSION}
+    echo Openshift RPM Version: ${OPENSHIFT_VERSION}
+    echo
+
+    /usr/bin/rm -rf ${AOS_TMPDIR}
+
+  # DEDICATED PRE CHECK
+  elif [ "${DEPLOYMENT}" == "dedicated" ]; then
+    # Make sure the $cicd_openshift_version is available
+    if [ -z "${cicd_openshift_version+x}" ]; then
+        echo "\$cicd_openshift_version not found.  Exiting..."
+        exit 1
+    fi
+
+    oo_version_short=$(echo ${cicd_openshift_version} | /usr/bin/cut -c 1-3)
+    VENDORED_OPENSHIFT_ANSIBLE_VERSION=$(/usr/bin/basename $(/usr/bin/readlink -f ../../../openshift-tools/openshift/installer/atomic-openshift-${oo_version_short}))
+
+    MASTER="$(get_master_name)"
+    /usr/local/bin/autokeys_loader ossh -l root "${MASTER}" -c "/usr/bin/yum clean all" > /dev/null
+    /usr/local/bin/autokeys_loader ossh -l root "${MASTER}" -c "/usr/sbin/atomic-openshift-excluder unexclude" > /dev/null
+    OPENSHIFT_VERSIONS_FOUND=$(/usr/local/bin/autokeys_loader ossh -l root "${MASTER}" -c "/usr/bin/repoquery --show-duplicates --quiet --pkgnarrow=repos --queryformat='Repository: %-30{repoid}  Package: %{name}-%{version}-%{release}' atomic-openshift-${cicd_openshift_version}")
+    /usr/local/bin/autokeys_loader ossh -l root "${MASTER}" -c "/usr/sbin/atomic-openshift-excluder exclude" > /dev/null
+
+    if [ "${OPENSHIFT_VERSIONS_FOUND}" == "" ]; then
+        echo "Unable to find requested version of Openshift.  Please Investigate..."
+        exit 1
+    else
+      echo
+      echo
+      echo Openshift Ansible Vendored Version: ${VENDORED_OPENSHIFT_ANSIBLE_VERSION}
+      echo Openshift RPMs Found:
+      echo "$OPENSHIFT_VERSIONS_FOUND"
+      echo
+    fi
+
+  fi
 
   echo
-  echo Openshift Ansible RPM Version: ${OS_RPM_VERSION}
-  echo Openshift RPM Version: ${OPENSHIFT_VERSION}
+  echo "Getting filesystem usage for '/' and '/var':"
+  echo "================================================================"
+  /usr/local/bin/autokeys_loader opssh -c ${CLUSTERNAME} -t master -i  '/usr/bin/df -h  / /var /var/lib/etcd | /usr/bin/uniq'
+  echo
   echo
 
-  /usr/bin/rm -rf ${AOS_TMPDIR}
   exit 0
 }
 
@@ -242,6 +298,22 @@ function smoketest() {
 }
 
 function setup_cluster_vars() {
+
+  oo_environment="$(/usr/bin/ohi -c ${CLUSTERNAME} --get-cluster-var oo_environment)"
+  if [ "$?" -ne 0 ]; then
+    echo "There was a problem setting the environment for the cluster.  Exiting..."
+    exit 1
+  fi
+
+}
+
+################################################
+# OPERATION: INSTALL
+################################################
+function install_cluster() {
+#OPERATION = install
+  is_running &
+
   set +x  # Mask sensitive data
   source "$GIT_ROOT/openshift-ansible-private/private_roles/aos-cicd/files/${CLUSTERNAME}/${CLUSTERNAME}_vars.sh"
   #set -x
@@ -256,19 +328,10 @@ function setup_cluster_vars() {
   # Update cluster setup changes to the releases directory
   /usr/bin/cp ${CLUSTER_SETUP_TEMPLATE_FILE} "$GIT_ROOT/openshift-ansible-ops/playbooks/release/bin"
 
-  # Get the version and env from the template file
-  oo_version="$(grep -Po '(?<=^g_install_version: ).*' "${CLUSTER_SETUP_TEMPLATE_FILE}" | /usr/bin/cut -c 1-3)"
   oo_environment="$(grep -Po '(?<=^g_environment: ).*' "${CLUSTER_SETUP_TEMPLATE_FILE}")"
-}
 
-################################################
-# OPERATION: INSTALL
-################################################
-function install_cluster() {
-#OPERATION = install
-  is_running &
+  #setup_cluster_vars
 
-  setup_cluster_vars
   get_latest_openshift_ansible ${oo_environment}
 
   # Deploy all the things
@@ -309,32 +372,6 @@ function delete_cluster() {
   /usr/share/ansible/inventory/multi_inventory.py --refresh-cache --cluster=${CLUSTERNAME} >/dev/null
 }
 
-
-################################################
-# OPERATION: Upgrade
-#  This is legacy, and should be removed when it's time to move to the cluster operation
-################################################
-function legacy_upgrade_cluster() {
-  echo Doing upgrade
-  is_running &
-
-  ./disable-docker-timer-hack.sh "${CLUSTERNAME}" > /dev/null &
-
-
-  # Get the latest openshift-ansible rpms
-  get_latest_openshift_ansible ${oo_environment}
-
-  # Run the upgrade, including post_byo steps and config loop
-  pushd ~/aos-cd/git/openshift-ansible-ops/playbooks/release/bin
-    /usr/local/bin/autokeys_loader ./refresh_aws_tmp_credentials.py --refresh &> /dev/null &
-
-    # Kill all background jobs on normal exit or signal
-
-    export AWS_DEFAULT_PROFILE=$AWS_ACCOUNT_NAME
-    export SKIP_GIT_VALIDATION=TRUE
-    /usr/local/bin/autokeys_loader ./aws_online_cluster_upgrade.sh ./ops-to-productization-inventory.py ${CLUSTERNAME}
-}
-
 ################################################
 # OPERATION: GENERAL OPERATIONS CLUSTER
 ################################################
@@ -355,19 +392,24 @@ function cluster_operation() {
   # Do long running operations
   is_running &
 
-  # Hack to ensure docker doesn't die during upgrades
-  DOCKER_TIMER_OPERATIONS=(upgrade upgrade-control-plane upgrade-nodes)
-  if [[ " ${DOCKER_TIMER_OPERATIONS[*]} " == *" ${CLUSTER_OPERATION} "* ]]; then
-    ./disable-docker-timer-hack.sh "${CLUSTERNAME}" > /dev/null &
+  # For online deployments, skip statuspage, get the lastest openshift-ansible
+  if [ "${DEPLOYMENT}" == "online" ]; then
+    # For now, let's skip statuspage operations
+    export SKIP_STATUS_PAGE="true"
+
+    # Get the latest openshift-ansible rpms
+    LATEST_ANSIBLE_OPERATIONS=(install upgrade upgrade-control-plane upgrade-nodes upgrade-metrics upgrade-logging)
+
+    if [[ " ${LATEST_ANSIBLE_OPERATIONS[*]} " == *" ${CLUSTER_OPERATION} "* ]]; then
+      get_latest_openshift_ansible ${oo_environment}
+    fi
+
+    if [[ "${CLUSTER_OPERATION}" == online-* ]]; then
+      update-online-roles
+    fi
   fi
 
-  # Get the latest openshift-ansible rpms
-  LATEST_ANSIBLE_OPERATIONS=(install upgrade upgrade-control-plane upgrade-nodes upgrade-metrics upgrade-logging)
-  if [[ " ${LATEST_ANSIBLE_OPERATIONS[*]} " == *" ${CLUSTER_OPERATION} "* ]]; then
-    get_latest_openshift_ansible ${oo_environment}
-  fi
-
-  # Run the upgrade, including post_byo steps and config loop
+  # Run the operation
   pushd ~/aos-cd/git/openshift-ansible-ops/playbooks/release/bin
     /usr/local/bin/autokeys_loader ./cicd_operations.sh -c ${CLUSTERNAME} -o ${CLUSTER_OPERATION}
   popd

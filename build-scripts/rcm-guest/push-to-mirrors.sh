@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Push the latest puddle to the mirrors
+# Push the latest atomic-openshift puddle to the mirrors
 #
 
 set -o xtrace
@@ -10,9 +10,10 @@ set -e
 # VARIABLES
 ############
 PUDDLE_TYPE="${1}"
-MAJOR_MINOR="${2}"
+FULL_VERSION="${2}"
 BUILD_MODE="${3}"
 BASEDIR="/mnt/rcm-guest/puddles/RHAOS"
+MAJOR_MINOR=$(echo "${FULL_VERSION}" | cut -d . -f 1-2)
 
 if [ "$BUILD_MODE" == "release" ] || [ "$BUILD_MODE" == "pre-release" ] || [ "$BUILD_MODE" == "" ]; then
     REPO="enterprise-${MAJOR_MINOR}"
@@ -39,7 +40,7 @@ usage() {
   echo >&2
   echo "type: simple errata" >&2
   echo "  type of puddle we are pushing" >&2
-  echo "version: 3.2 3.3 etc.." >&2
+  echo "version: e.g. 3.7.0-0.143.7" >&2
   echo "  What version we are pulling from" >&2
   echo "  For enterprise repos, which release we are pushing to" >&2
   echo "build_mode: release|pre-release|online:int|online:stg" >&2
@@ -57,15 +58,26 @@ if [ "$#" -lt 2 ] ; then
 fi
 
 if [ "${PUDDLE_TYPE}" == "simple" ] ; then
-	# PUDDLEDIR is a symlink to the most recently created puddle.
-	PUDDLEDIR="${BASEDIR}/AtomicOpenShift/${MAJOR_MINOR}/latest"
+  PUDDLEDIR=${BASEDIR}/AtomicOpenShift/${MAJOR_MINOR}
 else
-	# PUDDLEDIR is a symlink to the most recently created puddle.
-	PUDDLEDIR="${BASEDIR}/AtomicOpenShift-errata/${MAJOR_MINOR}/latest"
+  PUDDLEDIR=${BASEDIR}/AtomicOpenShift-errata/${MAJOR_MINOR}
 fi
 
+# This directory is initially created by puddle as 755.  Setting it to 775
+# allows other trusted users to run puddle/write into this directory once the
+# directory has been established.
+chmod 775 "${PUDDLEDIR}/" || true
+
 # dereference the symlink to the actual directory basename: e.g. "2017-06-09.4"
-LASTDIR=$(readlink ${PUDDLEDIR})
+LASTDIR=$(readlink --verbose "${PUDDLEDIR}/latest")
+
+# Create a symlink on rcm-guest which includes the OCP version. This
+# helps find puddles on rcm-guest for particular builds. Note that
+# we can't simply rename the directory, because the directory contains
+# puddle.repo contains a URL referring to the puddle directory name
+# that was created by the puddle command.
+VERSIONED_DIR="${LASTDIR}_v${FULL_VERSION}"  # e.g. 2017-06-09.4_v3.7.0-0.173.0
+ln -sfn "${LASTDIR}" "${PUDDLEDIR}/${VERSIONED_DIR}"
 
 echo "Pushing puddle: $LASTDIR"
 
@@ -78,27 +90,34 @@ ALL_DIR="/srv/enterprise/all/${MAJOR_MINOR}"
 $MIRROR_SSH sh -s <<-EOF
   set -e
   set -o xtrace
-  
-  # In case this repo has never been used before, create it.
-  mkdir -p "${MIRROR_PATH}"
+
+  # In case this REPO directory has never been used before, create it
+  # along with the versioned directory we will be populating.
+  mkdir -p "${MIRROR_PATH}/${VERSIONED_DIR}"
   cd "${MIRROR_PATH}"
-  
-  # Copy all files from the last latest into a directory for the new puddle 
-  # (jmp: in order to prevent as much transfer as possible by rysnc for things which weren't rebuilt?)
-  cp -r --link latest/ $LASTDIR
+
+  if [ -e "latest" ]; then
+      # Copy all files from the last latest into a directory for the new puddle. Note that the
+      # destination directory is changing to a version qualified directory.
+      # (jmp: in order to prevent as much transfer as possible by rysnc for things which weren't rebuilt?)
+      cp -r --link latest/* ${VERSIONED_DIR}
+  fi
+
 EOF
 
-# Copy the local puddle to the new, remote location.
-rsync -aHv --delete-after --progress --no-g --omit-dir-times --chmod=Dug=rwX -e "${MIRROR_SSH_BASE}" ${PUDDLEDIR}/ ${MIRROR_SSH_SERVER}:${MIRROR_PATH}/${LASTDIR}/
+# Copy the local puddle to a server used to stage files for the mirrors.
+# The new location should be a directory which includes the OCP version.
+rsync -aHv --delete-after --progress --no-g --omit-dir-times --chmod=Dug=rwX -e "${MIRROR_SSH_BASE}" "${PUDDLEDIR}/${LASTDIR}/" "${MIRROR_SSH_SERVER}:${MIRROR_PATH}/${VERSIONED_DIR}/"
 
 $MIRROR_SSH sh -s <<-EOF
   set -e
   set -o xtrace
-  cd "/srv/enterprise/${REPO}"
+  cd "${MIRROR_PATH}"
+
   # Replace latest link with new puddle content
-  ln -sfn $LASTDIR latest
-  
-  cd "/srv/enterprise/${REPO}/latest"
+  ln -sfn ${VERSIONED_DIR} latest
+
+  cd "${MIRROR_PATH}/latest"
   # Some folks use this legacy location for their yum repo configuration
   # e.g. https://euw-mirror1.ops.rhcloud.com/enterprise/enterprise-3.3/latest/RH7-RHAOS-3.3/x86_64/os
   if [ "${PUDDLE_TYPE}" == "simple" ] ; then
@@ -107,14 +126,14 @@ $MIRROR_SSH sh -s <<-EOF
   	ln -s RH7-RHAOS-${MAJOR_MINOR}/* .
   fi
 
-  # All builds should be tracked in this repository. 
-  mkdir -p ${ALL_DIR} 
+  # All builds should be tracked in this repository.
+  mkdir -p ${ALL_DIR}
   cd "${ALL_DIR}"
-  
-  # Symlink new build into all directory. 
-  ln -s /srv/enterprise/${REPO}/$LASTDIR
+
+  # Symlink new build into all directory.
+  ln -s ${MIRROR_PATH}/${VERSIONED_DIR}
   # Replace any existing latest directory to point to the last build.
-  ln -sfn /srv/enterprise/${REPO}/$LASTDIR latest
+  ln -sfn ${MIRROR_PATH}/${VERSIONED_DIR} latest
 
   # Synchronize the changes to the mirrors
   /usr/local/bin/push.enterprise.sh ${REPO} -v

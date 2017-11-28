@@ -1,0 +1,13 @@
+---
+parent: 'test_cases/test_branch_origin_extended_conformance_gce.yml'
+overrides:
+  sync_repos:
+    - name: "origin"
+      type: "pull_request"
+    - name: "release"
+extensions:
+  parameters:
+    - name: "SUITE"
+      description: "Which shell file in the <a href='https://github.com/openshift/origin/tree/master/test/extended'><code>origin/test/extended/</code></a> di
+rectory to run."
+      default_value: "conformance-k8s"

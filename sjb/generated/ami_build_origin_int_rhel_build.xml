@@ -69,7 +69,7 @@ oct provision remote all-in-one --os &#34;rhel&#34; --stage &#34;base&#34; --pro
         <hudson.tasks.Shell>
           <command>#!/bin/bash
 SCRIPT_START_TIME=&#34;$( date +%s )&#34; &amp;&amp; export SCRIPT_START_TIME &amp;&amp; echo &#34;########## STARTING STAGE: BRING SOURCE CODE UP TO DATE ##########&#34; &amp;&amp; trap &#39;export status=FAILURE&#39; ERR &amp;&amp; trap &#39;set +o xtrace; SCRIPT_END_TIME=&#34;$( date +%s )&#34;; ELAPSED_TIME=&#34;$(( SCRIPT_END_TIME - SCRIPT_START_TIME ))&#34;; echo &#34;########## FINISHED STAGE: ${status:-SUCCESS}: BRING SOURCE CODE UP TO DATE [$( printf &#34;%02dh %02dm %02ds&#34; &#34;$(( ELAPSED_TIME/3600 ))&#34; &#34;$(( (ELAPSED_TIME%3600)/60 ))&#34; &#34;$(( ELAPSED_TIME%60 ))&#34; )] ##########&#34;&#39; EXIT &amp;&amp; set -o errexit -o nounset -o pipefail -o xtrace &amp;&amp; if [[ -s &#34;${WORKSPACE}/activate&#34; ]]; then source &#34;${WORKSPACE}/activate&#34;; fi
-for repo in aos-cd-jobs origin origin-web-console openshift-ansible origin-aggregated-logging; do
+for repo in aos-cd-jobs origin origin-web-console openshift-ansible origin-aggregated-logging image-registry; do
   oct sync remote &#34;${repo}&#34;
 done</command>
         </hudson.tasks.Shell>
@@ -119,6 +119,37 @@ ssh -F ./.config/origin-ci-tool/inventory/.ssh_config -t openshiftdevel &#34;bas
         </hudson.tasks.Shell>
         <hudson.tasks.Shell>
           <command>#!/bin/bash
+SCRIPT_START_TIME=&#34;$( date +%s )&#34; &amp;&amp; export SCRIPT_START_TIME &amp;&amp; echo &#34;########## STARTING STAGE: DETERMINE THE RELEASE COMMIT FOR ORIGIN IMAGES AND VERSION FOR RPMS ##########&#34; &amp;&amp; trap &#39;export status=FAILURE&#39; ERR &amp;&amp; trap &#39;set +o xtrace; SCRIPT_END_TIME=&#34;$( date +%s )&#34;; ELAPSED_TIME=&#34;$(( SCRIPT_END_TIME - SCRIPT_START_TIME ))&#34;; echo &#34;########## FINISHED STAGE: ${status:-SUCCESS}: DETERMINE THE RELEASE COMMIT FOR ORIGIN IMAGES AND VERSION FOR RPMS [$( printf &#34;%02dh %02dm %02ds&#34; &#34;$(( ELAPSED_TIME/3600 ))&#34; &#34;$(( (ELAPSED_TIME%3600)/60 ))&#34; &#34;$(( ELAPSED_TIME%60 ))&#34; )] ##########&#34;&#39; EXIT &amp;&amp; set -o errexit -o nounset -o pipefail -o xtrace &amp;&amp; if [[ -s &#34;${WORKSPACE}/activate&#34; ]]; then source &#34;${WORKSPACE}/activate&#34;; fi
+script=&#34;$( mktemp )&#34;
+cat &lt;&lt;SCRIPT &gt;&#34;${script}&#34;
+#!/bin/bash
+set -o errexit -o nounset -o pipefail -o xtrace
+cd &#34;\${GOPATH}/src/github.com/openshift/origin&#34;
+jobs_repo=&#34;/data/src/github.com/openshift/aos-cd-jobs/&#34;
+git log -1 --pretty=%h &gt;&gt; &#34;\${jobs_repo}/ORIGIN_COMMIT&#34;
+( source hack/lib/init.sh; os::build::rpm::get_nvra_vars; echo &#34;-\${OS_RPM_VERSION}-\${OS_RPM_RELEASE}&#34; ) &gt;&gt; &#34;\${jobs_repo}/ORIGIN_PKG_VERSION&#34;
+SCRIPT
+chmod +x &#34;${script}&#34;
+scp -F ./.config/origin-ci-tool/inventory/.ssh_config &#34;${script}&#34; openshiftdevel:&#34;${script}&#34;
+ssh -F ./.config/origin-ci-tool/inventory/.ssh_config -t openshiftdevel &#34;bash -l -c \&#34;timeout 600 ${script}\&#34;&#34; </command>
+        </hudson.tasks.Shell>
+        <hudson.tasks.Shell>
+          <command>#!/bin/bash
+SCRIPT_START_TIME=&#34;$( date +%s )&#34; &amp;&amp; export SCRIPT_START_TIME &amp;&amp; echo &#34;########## STARTING STAGE: BUILD THE IMAGE REGISTRY CONTAINER IMAGE ##########&#34; &amp;&amp; trap &#39;export status=FAILURE&#39; ERR &amp;&amp; trap &#39;set +o xtrace; SCRIPT_END_TIME=&#34;$( date +%s )&#34;; ELAPSED_TIME=&#34;$(( SCRIPT_END_TIME - SCRIPT_START_TIME ))&#34;; echo &#34;########## FINISHED STAGE: ${status:-SUCCESS}: BUILD THE IMAGE REGISTRY CONTAINER IMAGE [$( printf &#34;%02dh %02dm %02ds&#34; &#34;$(( ELAPSED_TIME/3600 ))&#34; &#34;$(( (ELAPSED_TIME%3600)/60 ))&#34; &#34;$(( ELAPSED_TIME%60 ))&#34; )] ##########&#34;&#39; EXIT &amp;&amp; set -o errexit -o nounset -o pipefail -o xtrace &amp;&amp; if [[ -s &#34;${WORKSPACE}/activate&#34; ]]; then source &#34;${WORKSPACE}/activate&#34;; fi
+script=&#34;$( mktemp )&#34;
+cat &lt;&lt;SCRIPT &gt;&#34;${script}&#34;
+#!/bin/bash
+set -o errexit -o nounset -o pipefail -o xtrace
+cd &#34;\${GOPATH}/src/github.com/openshift/image-registry&#34;
+make build-images
+docker tag openshift/origin-docker-registry:latest &#34;openshift/origin-docker-registry:\$( cat /data/src/github.com/openshift/aos-cd-jobs/ORIGIN_COMMIT )&#34;
+SCRIPT
+chmod +x &#34;${script}&#34;
+scp -F ./.config/origin-ci-tool/inventory/.ssh_config &#34;${script}&#34; openshiftdevel:&#34;${script}&#34;
+ssh -F ./.config/origin-ci-tool/inventory/.ssh_config -t openshiftdevel &#34;bash -l -c \&#34;timeout 3600 ${script}\&#34;&#34; </command>
+        </hudson.tasks.Shell>
+        <hudson.tasks.Shell>
+          <command>#!/bin/bash
 SCRIPT_START_TIME=&#34;$( date +%s )&#34; &amp;&amp; export SCRIPT_START_TIME &amp;&amp; echo &#34;########## STARTING STAGE: BUILD AN ORIGIN-AGGREGATED-LOGGING RELEASE ##########&#34; &amp;&amp; trap &#39;export status=FAILURE&#39; ERR &amp;&amp; trap &#39;set +o xtrace; SCRIPT_END_TIME=&#34;$( date +%s )&#34;; ELAPSED_TIME=&#34;$(( SCRIPT_END_TIME - SCRIPT_START_TIME ))&#34;; echo &#34;########## FINISHED STAGE: ${status:-SUCCESS}: BUILD AN ORIGIN-AGGREGATED-LOGGING RELEASE [$( printf &#34;%02dh %02dm %02ds&#34; &#34;$(( ELAPSED_TIME/3600 ))&#34; &#34;$(( (ELAPSED_TIME%3600)/60 ))&#34; &#34;$(( ELAPSED_TIME%60 ))&#34; )] ##########&#34;&#39; EXIT &amp;&amp; set -o errexit -o nounset -o pipefail -o xtrace &amp;&amp; if [[ -s &#34;${WORKSPACE}/activate&#34; ]]; then source &#34;${WORKSPACE}/activate&#34;; fi
 script=&#34;$( mktemp )&#34;
 cat &lt;&lt;SCRIPT &gt;&#34;${script}&#34;
@@ -149,9 +180,9 @@ oct package ami --mark-ready</command>
           <command>#!/bin/bash
 SCRIPT_START_TIME=&#34;$( date +%s )&#34; &amp;&amp; export SCRIPT_START_TIME &amp;&amp; echo &#34;########## STARTING STAGE: DOWNLOAD ARTIFACTS FROM THE REMOTE HOST ##########&#34; &amp;&amp; trap &#39;export status=FAILURE&#39; ERR &amp;&amp; trap &#39;set +o xtrace; SCRIPT_END_TIME=&#34;$( date +%s )&#34;; ELAPSED_TIME=&#34;$(( SCRIPT_END_TIME - SCRIPT_START_TIME ))&#34;; echo &#34;########## FINISHED STAGE: ${status:-SUCCESS}: DOWNLOAD ARTIFACTS FROM THE REMOTE HOST [$( printf &#34;%02dh %02dm %02ds&#34; &#34;$(( ELAPSED_TIME/3600 ))&#34; &#34;$(( (ELAPSED_TIME%3600)/60 ))&#34; &#34;$(( ELAPSED_TIME%60 ))&#34; )] ##########&#34;&#39; EXIT &amp;&amp; set -o errexit -o nounset -o pipefail -o xtrace &amp;&amp; if [[ -s &#34;${WORKSPACE}/activate&#34; ]]; then source &#34;${WORKSPACE}/activate&#34;; fi
 trap &#39;exit 0&#39; EXIT
-ARTIFACT_DIR=&#34;$( pwd )/artifacts&#34;
+ARTIFACT_DIR=&#34;$( pwd )/artifacts/gathered&#34;
 rm -rf &#34;${ARTIFACT_DIR}&#34;
-mkdir &#34;${ARTIFACT_DIR}&#34;
+mkdir -p &#34;${ARTIFACT_DIR}&#34;
 if ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel sudo stat /data/src/github/openshift/origin/_output/scripts; then
     ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel sudo chmod -R o+rX /data/src/github/openshift/origin/_output/scripts
     scp -r -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel:/data/src/github/openshift/origin/_output/scripts &#34;${ARTIFACT_DIR}&#34;
@@ -179,6 +210,7 @@ ARTIFACT_DIR=&#34;$( pwd )/artifacts/journals&#34;
 rm -rf &#34;${ARTIFACT_DIR}&#34;
 mkdir &#34;${ARTIFACT_DIR}&#34;
 ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel sudo journalctl --unit docker.service --no-pager --all --lines=all &gt;&gt; &#34;${ARTIFACT_DIR}/docker.service&#34;
+ssh -F ./.config/origin-ci-tool/inventory/.ssh_config openshiftdevel sudo journalctl --unit systemd-journald.service --no-pager --all --lines=all &gt;&gt; &#34;${ARTIFACT_DIR}/systemd-journald.service&#34;
 tree &#34;${ARTIFACT_DIR}&#34; </command>
         </hudson.tasks.Shell>
         <hudson.tasks.Shell>
@@ -238,6 +270,19 @@ oct deprovision</command>
       </pluginFailureResultConstraint>
       <userMetadata/>
     </hudson.plugins.s3.S3BucketPublisher>
+    <hudson.plugins.ws__cleanup.WsCleanup plugin="ws-cleanup@0.34">
+      <patterns class="empty-list"/>
+      <deleteDirs>false</deleteDirs>
+      <skipWhenFailed>false</skipWhenFailed>
+      <cleanWhenSuccess>true</cleanWhenSuccess>
+      <cleanWhenUnstable>true</cleanWhenUnstable>
+      <cleanWhenFailure>true</cleanWhenFailure>
+      <cleanWhenNotBuilt>true</cleanWhenNotBuilt>
+      <cleanWhenAborted>true</cleanWhenAborted>
+      <notFailBuild>false</notFailBuild>
+      <cleanupMatrixParent>false</cleanupMatrixParent>
+      <externalDelete></externalDelete>
+    </hudson.plugins.ws__cleanup.WsCleanup>
   </publishers>
   <buildWrappers>
     <hudson.plugins.ws__cleanup.PreBuildCleanup plugin="ws-cleanup@0.32">
@@ -245,9 +290,6 @@ oct deprovision</command>
       <cleanupParameter></cleanupParameter>
       <externalDelete></externalDelete>
     </hudson.plugins.ws__cleanup.PreBuildCleanup>
-    <hudson.plugins.ansicolor.AnsiColorBuildWrapper plugin="ansicolor@0.4.2">
-      <colorMapName>xterm</colorMapName>
-    </hudson.plugins.ansicolor.AnsiColorBuildWrapper>
   </buildWrappers>
   <pollSubjobs>false</pollSubjobs>
 </com.tikal.jenkins.plugins.multijob.MultiJobProject>

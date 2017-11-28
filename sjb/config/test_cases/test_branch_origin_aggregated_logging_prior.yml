@@ -1,6 +1,7 @@
 ---
 parent: 'common/test_cases/origin_built_release.yml'
 overrides:
+  junit_analysis: False
   sync_repos:
     - name: "origin-aggregated-logging"
 extensions:
@@ -32,11 +33,14 @@ extensions:
         popd
   system_journals:
     - origin-master.service
+    - origin-master-api.service
+    - origin-master-controllers.service
     - origin-node.service
     - openvswitch.service
     - ovs-vswitchd.service
     - ovsdb-server.service
     - etcd.service
+    - systemd-journald.service
   artifacts:
     - "/data/src/github.com/openshift/origin-aggregated-logging/_output/scripts"
     - "/tmp/origin-aggregated-logging"
